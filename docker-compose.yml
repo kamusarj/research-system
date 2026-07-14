@@ -1,0 +1,105 @@
+services:
+  database:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: research
+      POSTGRES_USER: research
+      POSTGRES_PASSWORD: research
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U research -d research"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  api:
+    build: ./apps/api
+    environment:
+      DATABASE_URL: postgresql+psycopg://research:research@database:5432/research
+      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost:3000}
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-luna}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-pro}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-5.6-luna}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      MISTRAL_MODEL: ${MISTRAL_MODEL:-mistral-large-latest}
+      INTAKE_MAX_ATTEMPTS: ${INTAKE_MAX_ATTEMPTS:-3}
+      INTAKE_RETRY_BASE_SECONDS: ${INTAKE_RETRY_BASE_SECONDS:-30}
+      INTAKE_WORKER_POLL_SECONDS: ${INTAKE_WORKER_POLL_SECONDS:-2}
+      INTAKE_JOB_LEASE_SECONDS: ${INTAKE_JOB_LEASE_SECONDS:-300}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GRAPH_DATA_PROVIDER: ${GRAPH_DATA_PROVIDER:-postgres}
+      GRAPH_DEFAULT_NODE_LIMIT: ${GRAPH_DEFAULT_NODE_LIMIT:-40}
+      GRAPH_MAX_NODE_LIMIT: ${GRAPH_MAX_NODE_LIMIT:-100}
+      GRAPH_MAX_EDGE_LIMIT: ${GRAPH_MAX_EDGE_LIMIT:-250}
+      GRAPH_MAX_DEPTH: ${GRAPH_MAX_DEPTH:-2}
+      GRAPH_MAX_NEIGHBORS: ${GRAPH_MAX_NEIGHBORS:-20}
+      NEO4J_URI: ${NEO4J_URI:-}
+      NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
+    depends_on:
+      database:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./apps/api:/app
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  worker:
+    build: ./apps/api
+    environment:
+      DATABASE_URL: postgresql+psycopg://research:research@database:5432/research
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-luna}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-pro}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-5.6-luna}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      MISTRAL_MODEL: ${MISTRAL_MODEL:-mistral-large-latest}
+      INTAKE_MAX_ATTEMPTS: ${INTAKE_MAX_ATTEMPTS:-3}
+      INTAKE_RETRY_BASE_SECONDS: ${INTAKE_RETRY_BASE_SECONDS:-30}
+      INTAKE_WORKER_POLL_SECONDS: ${INTAKE_WORKER_POLL_SECONDS:-2}
+      INTAKE_JOB_LEASE_SECONDS: ${INTAKE_JOB_LEASE_SECONDS:-300}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    depends_on:
+      database:
+        condition: service_healthy
+      api:
+        condition: service_started
+    volumes:
+      - ./apps/api:/app
+    command: python -m app.worker
+
+  frontend:
+    build: ./apps/web
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+    depends_on:
+      - api
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    volumes:
+      - ./apps/web:/app
+      - frontend_modules:/app/node_modules
+      - frontend_next:/app/.next
+    command: npm run dev -- --hostname 0.0.0.0
+
+volumes:
+  postgres_data:
+  frontend_modules:
+  frontend_next:
