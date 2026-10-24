@@ -222,12 +222,14 @@ def create_run(
     variant: str = "optimized",
     knowledge_gap_id: str | None = None,
     enforce_limits: bool = True,
+    actor: str | None = None,
+    cache_salt: str = "",
 ) -> ResearchRun:
     if not settings.research_agent_enabled:
         raise DocumentError("FEATURE_DISABLED", "Nghiên cứu sâu chưa được bật", 503)
     if variant not in VARIANTS:
         raise DocumentError("RESEARCH_VARIANT_UNSUPPORTED", "Biến thể không được hỗ trợ", 422)
-    actor = current_actor_id()
+    actor = actor or current_actor_id()
     if enforce_limits:
         active = db.scalar(
             select(func.count())
@@ -250,7 +252,7 @@ def create_run(
     run = ResearchRun(
         question=" ".join(question.split()),
         variant=variant,
-        config_json=dict(VARIANTS[variant]),
+        config_json={**VARIANTS[variant], **({"cache_salt": cache_salt} if cache_salt else {})},
         provider_name=settings.research_agent_provider or settings.ai_provider,
         knowledge_gap_id=knowledge_gap_id,
         next_attempt_at=utcnow(),

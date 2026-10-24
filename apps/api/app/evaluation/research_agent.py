@@ -7,6 +7,7 @@ lượt chạy mới cần mô hình và máy tìm kiếm thật.
 
 import json
 import time
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 from statistics import mean
@@ -37,19 +38,48 @@ def run_question(
     variant: str,
     *,
     advance: Callable[[Session, ResearchRun], ResearchRun] = runner.advance_research_run,
+    cache_salt: str = "",
     max_steps: int = 40,
 ) -> dict[str, Any]:
-    run = runner.create_run(db, question["question"], variant=variant, enforce_limits=False)
+    # Người tạo riêng: worker không nhận các lượt này, nên eval tự điều khiển và đo đúng thời gian.
+    run = runner.create_run(
+        db,
+        question["question"],
+        variant=variant,
+        enforce_limits=False,
+        actor=runner.EVAL_ACTOR,
+        cache_salt=cache_salt,
+    )
     started = time.monotonic()
     for _ in range(max_steps):
         db.refresh(run)
         if run.status in TERMINAL:
             break
-        run.status = "running"
-        db.commit()
-        run = advance(db, run)
+        if run.next_attempt_at and run.status == "queued":
+            wait = (_aware(run.next_attempt_at) - runner.utcnow()).total_seconds()
+            if wait > 0:
+                time.sleep(min(wait, 120))
+        run = advance(db, runner.claim_run(db, run))
     db.refresh(run)
     return score_run(db, run, question, elapsed_seconds=time.monotonic() - started)
+
+
+def _aware(value):
+    return value if value.tzinfo else value.replace(tzinfo=runner.utcnow().tzinfo)
+
+
+def report_body(markdown: str) -> str:
+    """Phần nội dung báo cáo: bỏ phần đầu (có chép lại câu hỏi) và các mục Nguồn/Phương pháp."""
+    body: list[str] = []
+    skipping = False
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            skipping = stripped[3:] in ("Nguồn", "Phương pháp", "Khoảng trống bằng chứng")
+            continue
+        if not skipping and not stripped.startswith(("#", ">")):
+            body.append(line)
+    return "\n".join(body)
 
 
 def score_run(
@@ -62,7 +92,7 @@ def score_run(
     matched = int(metrics.get("claims_matched", 0))
     hits = int(metrics.get("hits_total", 0))
     report = db.get(ResearchItem, run.report_research_id) if run.report_research_id else None
-    text = (report.content if report else "").casefold()
+    text = report_body(report.content if report else "").casefold()
     entities = question.get("key_entities") or []
     cited_sources = [
         source
@@ -154,17 +184,33 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def compare_markdown(baseline: dict[str, Any], candidate: dict[str, Any]) -> str:
+    """So sánh trên cùng tập câu hỏi mà cả hai biến thể đều hoàn tất (tỉ lệ hoàn tất tính riêng)."""
+
+    def completed(result_set: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        return {r["id"]: r for r in result_set.get("results", []) if r["status"] == "completed"}
+
+    shared = sorted(completed(baseline).keys() & completed(candidate).keys())
+    before = summarize([completed(baseline)[qid] for qid in shared])
+    after = summarize([completed(candidate)[qid] for qid in shared])
+    before["completion_rate"] = baseline["summary"].get("completion_rate")
+    after["completion_rate"] = candidate["summary"].get("completion_rate")
     lines = [
+        f"Câu hỏi so sánh: {len(shared)} (cùng hoàn tất ở cả hai biến thể)",
+        "",
         f"| Chỉ số | {baseline['variant']} | {candidate['variant']} | Thay đổi |",
         "|---|---|---|---|",
     ]
     for field in ("completion_rate", *SUMMARY_FIELDS):
-        before = baseline["summary"].get(field)
-        after = candidate["summary"].get(field)
+        value_before = before.get(field)
+        value_after = after.get(field)
         change = ""
-        if isinstance(before, int | float) and isinstance(after, int | float) and before:
-            change = f"{(after - before) / before:+.0%}"
-        lines.append(f"| {field} | {before} | {after} | {change} |")
+        if (
+            isinstance(value_before, int | float)
+            and isinstance(value_after, int | float)
+            and value_before
+        ):
+            change = f"{(value_after - value_before) / value_before:+.0%}"
+        lines.append(f"| {field} | {value_before} | {value_after} | {change} |")
     return "\n".join(lines)
 
 
@@ -177,7 +223,10 @@ def run_eval(
 ) -> dict[str, Any]:
     # Lệnh vận hành chạy được kể cả khi tính năng chưa bật cho người dùng.
     settings.research_agent_enabled = True
+    # Mỗi lần eval một "muối" cache mới: biến thể sau không hưởng cache của biến thể trước.
+    salt = uuid.uuid4().hex
     results = [
-        run_question(db, question, variant) for question in load_questions(questions_path, only)
+        run_question(db, question, variant, cache_salt=salt)
+        for question in load_questions(questions_path, only)
     ]
     return {"variant": variant, "results": results, "summary": summarize(results)}
