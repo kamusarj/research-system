@@ -3613,3 +3613,7 @@ a.identity-copy:hover strong { text-decoration: underline; }
   .run-history-item .run-history-question { grid-column: 1 / -1; grid-row: 2; white-space: normal; }
   .question-form, .run-progress { padding: var(--space-4); }
 }
+.provider-status-skeleton { min-height: 13rem; }
+.review-backlog-skeleton { min-height: 6.5rem; }
+.document-authoring-skeleton { min-height: 62rem; }
+.chat-older { justify-self: center; }

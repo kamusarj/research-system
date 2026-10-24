@@ -20,7 +20,7 @@ const PAGE_SIZE = 50;
 
 export default function DocumentsPage() {
   const { t } = useI18n();
-  const { can, user } = useAuth();
+  const { can, user, loading } = useAuth();
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -92,7 +92,10 @@ export default function DocumentsPage() {
         </div>
       </header>
 
-      {can("researcher") && user && <DocumentAuthoring userId={user.id} />}
+      {/* Khung soạn thảo cần mã người dùng (khóa bản nháp cục bộ); giữ chỗ trong lúc kiểm tra phiên. */}
+      {can("researcher") && (user
+        ? <DocumentAuthoring userId={user.id} />
+        : loading && <div className="card skeleton document-authoring-skeleton" role="status" aria-label="Đang tải khung soạn thảo" />)}
 
       {can("researcher") && <details className="card document-upload-disclosure">
         <summary>{t("uploadBinaryDocument")}</summary>

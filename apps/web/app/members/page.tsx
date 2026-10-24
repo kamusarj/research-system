@@ -26,9 +26,10 @@ function errorText(reason: unknown, conflict: string): string {
 
 export default function MembersPage() {
   const { t } = useI18n();
-  const { can, enabled, user } = useAuth();
+  const { can, enabled, user, loading } = useAuth();
   const isOwner = can("owner");
-  const members = useQuery({ queryKey: ["members"], queryFn: listMembers, enabled: isOwner });
+  // Chỉ tải danh sách khi đã biết chắc vai trò, tránh một yêu cầu 403 trong lúc kiểm tra phiên.
+  const members = useQuery({ queryKey: ["members"], queryFn: listMembers, enabled: isOwner && !loading });
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("researcher");

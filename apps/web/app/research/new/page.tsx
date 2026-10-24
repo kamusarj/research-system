@@ -65,13 +65,6 @@ export default function NewResearchPage() {
         </div>
       </header>
 
-      {features.isSuccess && !enabled && (
-        <p className="notice" role="status">
-          Nghiên cứu sâu chưa được bật trên máy chủ này. Quản trị viên cần đặt <code>RESEARCH_AGENT_ENABLED=true</code> và
-          chạy dịch vụ tìm kiếm SearXNG (xem README).
-        </p>
-      )}
-
       <form className="card question-form" onSubmit={submit} aria-busy={submitting}>
         <label htmlFor="research-question">Câu hỏi nghiên cứu</label>
         <textarea
@@ -92,6 +85,12 @@ export default function NewResearchPage() {
           </ul>
           <span className="question-count">{trimmed.length}/1000</span>
         </div>
+        {features.isSuccess && !enabled && (
+          <p className="notice" role="status">
+            Nghiên cứu sâu chưa được bật trên máy chủ này. Quản trị viên cần đặt <code>RESEARCH_AGENT_ENABLED=true</code> và
+            chạy dịch vụ tìm kiếm SearXNG (xem README).
+          </p>
+        )}
         {error && <p className="notice error-notice" role="alert">{error}</p>}
         <div className="question-actions">
           <button type="submit" disabled={!canStart || trimmed.length < 10 || submitting} aria-busy={submitting}>

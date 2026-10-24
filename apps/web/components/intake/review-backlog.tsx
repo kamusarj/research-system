@@ -8,6 +8,7 @@ type Props = {
   backlog: ReviewBacklog | undefined;
   canApprove: boolean;
   onBulkReview: (decision: "approve" | "reject") => Promise<void>;
+  loading?: boolean;
 };
 
 /**
@@ -17,12 +18,12 @@ type Props = {
  * knowledge graph. Nothing in the product used to say how many there were, so the queue
  * grew unnoticed until it held most of the library.
  */
-export function ReviewBacklog({ backlog, canApprove, onBulkReview }: Props) {
+export function ReviewBacklog({ backlog, canApprove, onBulkReview, loading = false }: Props) {
   const { t } = useI18n();
   const [working, setWorking] = useState<"approve" | "reject" | null>(null);
   const [error, setError] = useState("");
 
-  if (!backlog) return null;
+  if (!backlog) return loading ? <div className="skeleton review-backlog-skeleton" role="status" aria-label="Đang tải hàng chờ duyệt" /> : null;
 
   const waiting = backlog.needs_review;
   const stranded = backlog.duplicates_awaiting_original;

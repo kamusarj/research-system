@@ -95,6 +95,7 @@ export default function IngestionPage() {
       {can("researcher") && (
         <ProviderStatus
           providers={providers.data ?? []}
+          loading={providers.isLoading}
           onPreflight={async () => {
             // Turning the flag on changes the query key, which is what fetches the
             // preflight result. Calling refetch() here would re-run the *previous* key,
@@ -109,6 +110,7 @@ export default function IngestionPage() {
       )}
       <ReviewBacklog
         backlog={backlog.data}
+        loading={backlog.isLoading}
         canApprove={can("owner")}
         onBulkReview={bulkReview}
       />

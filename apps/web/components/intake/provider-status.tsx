@@ -7,6 +7,7 @@ import type { Provider } from "@/lib/types";
 type Props = {
   providers: Provider[];
   onPreflight: () => Promise<void>;
+  loading?: boolean;
 };
 
 /**
@@ -16,11 +17,13 @@ type Props = {
  * wrong or expired key was previously invisible until a source had already been fetched,
  * classified and failed.
  */
-export function ProviderStatus({ providers, onPreflight }: Props) {
+export function ProviderStatus({ providers, onPreflight, loading = false }: Props) {
   const { t } = useI18n();
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
   const configured = providers.filter((provider) => provider.configured);
+  // Giữ chỗ khi đang tải để danh sách nguồn bên dưới không bị đẩy xuống lúc dữ liệu về.
+  if (loading) return <div className="skeleton provider-status-skeleton" role="status" aria-label="Đang kiểm tra nhà cung cấp AI" />;
   if (configured.length === 0) return null;
 
   const unreachable = configured.filter((provider) => provider.reachable === false);

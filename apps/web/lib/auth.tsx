@@ -155,7 +155,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     user,
     error,
     sessionExpired,
-    can: (requiredRole) => Boolean(user && roleLevel[user.role] >= roleLevel[requiredRole]),
+    // Trong lúc kiểm tra phiên, giả định có quyền để nút/biểu mẫu có sẵn trong HTML đầu tiên (không
+    // nhảy bố cục khi phiên về). Máy chủ vẫn kiểm tra quyền; vai trò thấp hơn sẽ thấy chúng ẩn đi.
+    can: (requiredRole) => loading || Boolean(user && roleLevel[user.role] >= roleLevel[requiredRole]),
     login,
     logout,
     reload,

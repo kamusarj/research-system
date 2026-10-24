@@ -24,6 +24,8 @@ import {
 import { useI18n } from "@/lib/i18n";
 import type { ChatScopeType, Provider } from "@/lib/types";
 
+const MESSAGE_WINDOW = 20;
+
 const scopeTypes: ChatScopeType[] = ["graph", "pillar", "node", "document", "change_set", "gap"];
 const CHAT_SELECTION_MAX_CHARS = 6000;
 // AI hệ thống cho chat: API trả phí cùng các CLI dùng gói đăng nhập trên máy chủ.
@@ -63,6 +65,9 @@ function ChatWorkspace() {
   const { t } = useI18n();
   const { can } = useAuth();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Chỉ dựng Markdown cho các tin nhắn gần nhất; cuộc trò chuyện dài mở nhanh hơn trên máy yếu.
+  const [visibleMessages, setVisibleMessages] = useState(MESSAGE_WINDOW);
+  useEffect(() => setVisibleMessages(MESSAGE_WINDOW), [selectedId]);
   const [showNew, setShowNew] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showApi, setShowApi] = useState(false);
@@ -387,7 +392,12 @@ function ChatWorkspace() {
               <div className="chat-message-list" ref={messageListRef} role="log" aria-label="Nội dung hội thoại" aria-live="polite">
                 {messages.isLoading && <p className="chat-thinking" role="status">Đang tải cuộc trò chuyện…</p>}
                 {messages.isError && <p role="alert">Không thể tải tin nhắn. <button className="secondary" onClick={() => messages.refetch()}>Tải lại</button></p>}
-                {(messages.data ?? []).map((message) => (
+                {(messages.data?.length ?? 0) > visibleMessages && (
+                  <button type="button" className="secondary chat-older" onClick={() => setVisibleMessages((count) => count + MESSAGE_WINDOW)}>
+                    Hiện {Math.min(MESSAGE_WINDOW, (messages.data?.length ?? 0) - visibleMessages)} tin nhắn cũ hơn
+                  </button>
+                )}
+                {(messages.data ?? []).slice(-visibleMessages).map((message) => (
                   <article className={`chat-message ${message.role} ${message.origin_type === "chatgpt_shared" ? "imported" : ""} ${message.error_code ? "failed" : ""}`} key={message.id}>
                     <div className="chat-avatar" aria-hidden="true">{message.role === "user" ? "B" : "✦"}</div>
                     <div
