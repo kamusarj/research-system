@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models import AIOutput, EmbeddingChunk, ResearchItem
+from app.services.ai_output_guard import reject_credentials
 from app.services.ai_usage import (
     report_usage,
     usage_from_chat_completions,
@@ -270,6 +271,7 @@ class CliBridgeProvider(BaseProvider):
             total_tokens=total,
             prompt_chars=len(prompt),
         )
+        reject_credentials(payload["output"], provider=self.backend)
         return schema.model_validate(payload["output"])
 
 

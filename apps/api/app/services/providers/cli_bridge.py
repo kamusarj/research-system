@@ -13,6 +13,7 @@ import httpx
 from pydantic import SecretStr
 
 from app.core.config import settings
+from app.services.ai_output_guard import reject_credentials
 from app.services.object_storage import DocumentError
 from app.services.providers.openai_graph_chat import GraphProviderResponse, GraphToolCall
 
@@ -233,6 +234,12 @@ class CliGraphChatProvider:
             ) from exc
 
         output = payload["output"]
+        try:
+            reject_credentials(output, provider=self.name)
+        except ValueError as exc:
+            raise DocumentError(
+                "CHAT_PROVIDER_FAILED", f"{self.name} returned a rejected chat response", 502
+            ) from exc
         tool_calls: list[GraphToolCall] = []
         for raw in output.get("tool_calls") or []:
             name = raw.get("name") if isinstance(raw, dict) else None
