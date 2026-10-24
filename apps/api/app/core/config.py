@@ -84,6 +84,29 @@ class Settings(BaseSettings):
     ai_request_timeout: float = 120
     # Trần token đầu ra cho tác vụ JSON có cấu trúc (chống tiêu thụ không giới hạn).
     ai_max_output_tokens: int = Field(default=8192, ge=256, le=65536)
+    # --- Nghiên cứu sâu: câu hỏi → báo cáo có trích dẫn (planner → searcher → verifier → writer)
+    research_agent_enabled: bool = False
+    research_agent_provider: str = ""  # rỗng = AI_PROVIDER
+    research_search_providers: str = "searxng,internal_kb"
+    searxng_url: str = "http://searxng:8080"
+    searxng_timeout_seconds: float = Field(default=8, gt=0, le=60)
+    searxng_engines: str = ""  # rỗng = theo cấu hình SearXNG
+    research_llm_concurrency: int = Field(default=2, ge=1, le=8)
+    research_fetch_concurrency: int = Field(default=6, ge=1, le=16)
+    research_max_queries: int = Field(default=10, ge=1, le=30)
+    research_hits_per_query: int = Field(default=8, ge=1, le=20)
+    research_max_sources: int = Field(default=12, ge=2, le=40)
+    research_max_per_domain: int = Field(default=3, ge=1, le=10)
+    research_source_chars: int = Field(default=12_000, ge=1_000, le=60_000)
+    research_extract_batch_chars: int = Field(default=30_000, ge=4_000, le=120_000)
+    research_max_claims_per_source: int = Field(default=6, ge=1, le=20)
+    research_max_llm_calls: int = Field(default=16, ge=3, le=60)
+    research_entailment_enabled: bool = True
+    research_run_lease_seconds: int = Field(default=900, ge=60, le=7_200)
+    research_max_attempts: int = Field(default=3, ge=1, le=10)
+    research_runs_per_user_per_day: int = Field(default=10, ge=1, le=500)
+    research_search_cache_hours: float = Field(default=24, ge=0, le=720)
+    research_fetch_cache_hours: float = Field(default=168, ge=0, le=2_160)
     # Không gọi AI dựng đồ thị cho tài liệu paper-fit đánh giá `not_relevant` (điểm < 40).
     document_graph_skip_low_fit: bool = True
     # Cầu nối trên máy chủ chạy Claude Code/Codex/Antigravity bằng gói đăng nhập của chủ máy

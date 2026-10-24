@@ -7,6 +7,7 @@ from app.core.observability import configure_logging, exception_fields
 from app.db import SessionLocal
 from app.services.document_processing import run_pending_documents
 from app.services.ingestion import run_pending_submissions
+from app.services.research_agent.runner import run_pending_research_steps
 
 if settings.log_format == "json":
     configure_logging()
@@ -32,7 +33,11 @@ def run_once() -> int:
         processed = run_pending_submissions(db, max_jobs=1)
         if stop_requested.is_set():
             return processed
-        return processed + run_pending_documents(db, max_jobs=1)
+        processed += run_pending_documents(db, max_jobs=1)
+        if stop_requested.is_set():
+            return processed
+        # Mỗi vòng chỉ chạy một bước của một lượt nghiên cứu để link/tài liệu không phải chờ lâu.
+        return processed + run_pending_research_steps(db, max_steps=1)
 
 
 def run_forever() -> None:

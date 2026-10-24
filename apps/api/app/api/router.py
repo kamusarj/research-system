@@ -13,6 +13,7 @@ from app.api.ingestion import router as ingestion_router
 from app.api.intake_receipts import router as intake_receipts_router
 from app.api.ontology import router as ontology_router
 from app.api.research import router as research_router
+from app.api.research_runs import router as research_runs_router
 from app.api.search import related_router
 from app.api.search import router as search_router
 from app.api.system import router as system_router
@@ -24,6 +25,7 @@ api_router.include_router(chat_router)
 api_router.include_router(collector_router)
 api_router.include_router(documents_router)
 api_router.include_router(research_router)
+api_router.include_router(research_runs_router)
 api_router.include_router(related_router)
 api_router.include_router(search_router)
 api_router.include_router(graph_router)

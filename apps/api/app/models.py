@@ -861,3 +861,130 @@ class PaperEvaluation(Base):
     prompt_version: Mapped[str | None] = mapped_column(String(100))
     input_hash: Mapped[str | None] = mapped_column(String(64), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ResearchRun(Base):
+    """Một câu hỏi nghiên cứu chạy qua planner → searcher → verifier → writer.
+
+    Hàng đợi trong cùng bảng (lease + thử lại như các tác vụ worker khác); kết quả cuối là một
+    `ResearchItem` nháp loại `deep-research-report` phải qua người duyệt.
+    """
+
+    __tablename__ = "research_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'running', 'completed', 'failed', 'cancelled')",
+            name="ck_research_run_status",
+        ),
+        Index("ix_research_runs_queue", "status", "next_attempt_at"),
+        Index("ix_research_runs_creator_day", "created_by", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    question: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="queued")
+    stage: Mapped[str] = mapped_column(String(30), default="planning")
+    variant: Mapped[str] = mapped_column(String(30), default="optimized")
+    config_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    provider_name: Mapped[str | None] = mapped_column(String(80))
+    model_name: Mapped[str | None] = mapped_column(String(200))
+    checkpoint_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    metrics_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    report_markdown: Mapped[str | None] = mapped_column(Text)
+    report_research_id: Mapped[str | None] = mapped_column(
+        ForeignKey("research_items.id", ondelete="SET NULL")
+    )
+    knowledge_gap_id: Mapped[str | None] = mapped_column(
+        ForeignKey("knowledge_gaps.id", ondelete="SET NULL")
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(64), default=current_actor_id)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ResearchRunEvent(Base):
+    """Nhật ký tiến độ chỉ ghi thêm; khóa số tăng dần làm `Last-Event-ID` cho SSE."""
+
+    __tablename__ = "research_run_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("research_runs.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(20))
+    stage: Mapped[str] = mapped_column(String(30))
+    message: Mapped[str] = mapped_column(Text)
+    data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ResearchRunSource(Base):
+    __tablename__ = "research_run_sources"
+    __table_args__ = (UniqueConstraint("run_id", "canonical_url", name="uq_run_source_url"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("research_runs.id", ondelete="CASCADE"), index=True
+    )
+    provider: Mapped[str] = mapped_column(String(30))
+    perspective: Mapped[str] = mapped_column(String(30))
+    query: Mapped[str] = mapped_column(Text, default="")
+    rank: Mapped[int] = mapped_column(Integer, default=0)
+    url: Mapped[str] = mapped_column(Text)
+    canonical_url: Mapped[str] = mapped_column(String(2000))
+    domain: Mapped[str] = mapped_column(String(255), default="")
+    title: Mapped[str] = mapped_column(Text, default="")
+    snippet: Mapped[str] = mapped_column(Text, default="")
+    content_text: Mapped[str] = mapped_column(Text, default="")
+    content_sha256: Mapped[str | None] = mapped_column(String(64))
+    simhash: Mapped[str | None] = mapped_column(String(16))
+    research_item_id: Mapped[str | None] = mapped_column(String(36))
+    status: Mapped[str] = mapped_column(String(20), default="discovered")
+    duplicate_of_id: Mapped[str | None] = mapped_column(String(36))
+    suspicious: Mapped[bool] = mapped_column(Boolean, default=False)
+    citation_index: Mapped[int | None] = mapped_column(Integer)
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ResearchRunClaim(Base):
+    __tablename__ = "research_run_claims"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("research_runs.id", ondelete="CASCADE"), index=True
+    )
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("research_run_sources.id", ondelete="CASCADE"), index=True
+    )
+    perspective: Mapped[str] = mapped_column(String(30))
+    text: Mapped[str] = mapped_column(Text)
+    quote: Mapped[str] = mapped_column(Text)
+    matched_quote: Mapped[str | None] = mapped_column(Text)
+    start_offset: Mapped[int | None] = mapped_column(Integer)
+    end_offset: Mapped[int | None] = mapped_column(Integer)
+    match_method: Mapped[str] = mapped_column(String(20), default="none")
+    entailment: Mapped[str] = mapped_column(String(20), default="skipped")
+    status: Mapped[str] = mapped_column(String(20), default="proposed")
+    reason: Mapped[str | None] = mapped_column(String(80))
+    used_in_report: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class ResearchWebCache(Base):
+    """Bộ nhớ đệm tìm kiếm/tải trang dùng chung giữa các lượt chạy, có hạn dùng."""
+
+    __tablename__ = "research_web_cache"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(10))
+    cache_key: Mapped[str] = mapped_column(String(64), unique=True)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    hit_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

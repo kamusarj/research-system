@@ -189,7 +189,9 @@ def observe_provider_call(
 
 
 @contextmanager
-def provider_observation(*, provider: str, model: str, operation: str) -> Iterator[None]:
+def provider_observation(
+    *, provider: str, model: str, operation: str
+) -> Iterator[dict[str, Any]]:
     # Nhập muộn để module quan sát không phụ thuộc tầng dịch vụ khi khởi động.
     from app.services.ai_usage import USAGE_FIELDS, collect_usage, record_call
 
@@ -197,7 +199,7 @@ def provider_observation(*, provider: str, model: str, operation: str) -> Iterat
     outcome = "success"
     with collect_usage() as usage:
         try:
-            yield
+            yield usage
         except Exception:
             outcome = "error"
             raise

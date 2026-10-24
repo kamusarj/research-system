@@ -15,6 +15,12 @@ x-app-environment: &app-environment
   INTAKE_AUTO_APPROVE_DOMAINS: ${INTAKE_AUTO_APPROVE_DOMAINS:-}
   AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-8192}
   DOCUMENT_GRAPH_SKIP_LOW_FIT: ${DOCUMENT_GRAPH_SKIP_LOW_FIT:-true}
+  RESEARCH_AGENT_ENABLED: ${RESEARCH_AGENT_ENABLED:-false}
+  RESEARCH_AGENT_PROVIDER: ${RESEARCH_AGENT_PROVIDER:-}
+  RESEARCH_SEARCH_PROVIDERS: ${RESEARCH_SEARCH_PROVIDERS:-searxng,internal_kb}
+  RESEARCH_RUNS_PER_USER_PER_DAY: ${RESEARCH_RUNS_PER_USER_PER_DAY:-10}
+  RESEARCH_MAX_LLM_CALLS: ${RESEARCH_MAX_LLM_CALLS:-16}
+  SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
   AI_PROVIDER: ${AI_PROVIDER:-mistral}
   OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
   OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
@@ -190,6 +196,27 @@ services:
       retries: 10
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
+  # Máy tìm kiếm tổng hợp cho pipeline nghiên cứu sâu: chỉ mạng nội bộ, không mở cổng ra máy chủ.
+  searxng:
+    profiles: ["research-agent"]
+    image: searxng/searxng:2026.10.9-f4822b3fc@sha256:85492ba800a861e3e8ff6014c430e81369fe6ca766a9990595f616d1ce95b272
+    restart: unless-stopped
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-}
+      SEARXNG_BASE_URL: http://searxng:8080/
+    volumes:
+      - ./ops/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    tmpfs:
+      - /var/cache/searxng
+    expose:
+      - "8080"
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: "2"
 
   meilisearch:
     profiles: ["search"]

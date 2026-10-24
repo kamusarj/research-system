@@ -95,6 +95,16 @@ ERROR_MESSAGES = {
     "INTERNAL_ERROR": "Máy chủ chưa thể hoàn tất yêu cầu. Hãy thử lại sau.",
     "METRICS_NOT_CONFIGURED": "Chưa cấu hình xác thực cho dữ liệu giám sát.",
     "NEO4J_NOT_CONFIGURED": "Đã chọn Neo4j cho đồ thị nhưng chưa cấu hình kết nối.",
+    "FEATURE_DISABLED": "Nghiên cứu sâu chưa được bật trên máy chủ này.",
+    "RESEARCH_RUN_ACTIVE": "Bạn đang có một lượt nghiên cứu chưa hoàn tất. Hãy chờ hoặc hủy nó.",
+    "RESEARCH_DAILY_BUDGET_EXCEEDED": "Bạn đã dùng hết số lượt nghiên cứu sâu hôm nay.",
+    "RESEARCH_RUN_NOT_FOUND": "Không tìm thấy lượt nghiên cứu.",
+    "RESEARCH_RUN_STATE": "Chỉ thử lại được lượt nghiên cứu đã thất bại.",
+    "RESEARCH_REPORT_NOT_READY": "Báo cáo chưa sẵn sàng.",
+    "RESEARCH_VARIANT_UNSUPPORTED": "Biến thể nghiên cứu không được hỗ trợ.",
+    "KNOWLEDGE_GAP_NOT_FOUND": "Không tìm thấy khoảng trống tri thức.",
+    "HOST_NOT_ALLOWED": "Tên máy chủ của yêu cầu không được chấp nhận.",
+    "CROSS_SITE_REQUEST_BLOCKED": "Yêu cầu từ trang web khác bị chặn.",
 }
 
 
