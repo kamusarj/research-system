@@ -11,6 +11,13 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models import AIOutput, EmbeddingChunk, ResearchItem
+from app.services.ai_usage import (
+    report_usage,
+    usage_from_chat_completions,
+    usage_from_gemini,
+    usage_from_ollama,
+    usage_from_openai_responses,
+)
 from app.services.providers.cli_bridge import (
     CLI_PROVIDERS,
     bridge_backend_available,
@@ -75,7 +82,9 @@ class OllamaProvider(BaseProvider):
             timeout=settings.ai_request_timeout,
         )
         response.raise_for_status()
-        return schema.model_validate_json(response.json()["response"])
+        payload = response.json()
+        report_usage(**usage_from_ollama(payload), prompt_chars=len(prompt))
+        return schema.model_validate_json(payload["response"])
 
 
 def secret_value(value: Any, provider_name: str) -> str:
@@ -113,6 +122,7 @@ class OpenAIProvider(BaseProvider):
         )
         response.raise_for_status()
         payload = response.json()
+        report_usage(**usage_from_openai_responses(payload), prompt_chars=len(prompt))
         text = payload.get("output_text")
         if not text:
             text = next(
@@ -167,7 +177,9 @@ class ChatCompletionsProvider(BaseProvider):
             timeout=settings.ai_request_timeout,
         )
         response.raise_for_status()
-        return schema.model_validate_json(response.json()["choices"][0]["message"]["content"])
+        payload = response.json()
+        report_usage(**usage_from_chat_completions(payload), prompt_chars=len(prompt))
+        return schema.model_validate_json(payload["choices"][0]["message"]["content"])
 
 
 class DeepSeekProvider(ChatCompletionsProvider):
@@ -215,7 +227,9 @@ class GeminiProvider(BaseProvider):
             timeout=settings.ai_request_timeout,
         )
         response.raise_for_status()
-        text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+        payload = response.json()
+        report_usage(**usage_from_gemini(payload), prompt_chars=len(prompt))
+        text = payload["candidates"][0]["content"]["parts"][0]["text"]
         return schema.model_validate_json(text)
 
 
@@ -237,6 +251,12 @@ class CliBridgeProvider(BaseProvider):
             prompt=prompt,
             schema=schema.model_json_schema(),
             system=CLI_SYSTEM_PROMPT,
+        )
+        usage = payload.get("usage") or {}
+        report_usage(
+            input_tokens=usage.get("input_tokens"),
+            output_tokens=usage.get("output_tokens"),
+            prompt_chars=len(prompt),
         )
         return schema.model_validate(payload["output"])
 

@@ -253,6 +253,27 @@ class AIOutput(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class AICallMetric(Base):
+    """Một lời gọi nhà cung cấp AI: độ trễ và token, không lưu prompt hay nội dung phản hồi."""
+
+    __tablename__ = "ai_call_metrics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    operation: Mapped[str] = mapped_column(String(80), index=True)
+    provider: Mapped[str] = mapped_column(String(50))
+    model: Mapped[str] = mapped_column(String(120))
+    outcome: Mapped[str] = mapped_column(String(20))
+    latency_ms: Mapped[int] = mapped_column(Integer)
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    cached_input_tokens: Mapped[int | None] = mapped_column(Integer)
+    prompt_chars: Mapped[int | None] = mapped_column(Integer)
+    cache_hit: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+
+
 class EmbeddingChunk(Base):
     __tablename__ = "embedding_chunks"
     __table_args__ = (UniqueConstraint("research_id", "chunk_index"),)

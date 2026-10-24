@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.identity import current_actor_id
-from app.core.observability import observe_provider_tokens, provider_observation
+from app.core.observability import provider_observation
 from app.models import (
     AuditEvent,
     ChatMessage,
@@ -39,6 +39,7 @@ from app.schemas.chat import (
     ChatSummaryRequest,
     ChatTurnRead,
 )
+from app.services.ai_usage import report_usage_dict
 from app.services.chatgpt_import import import_chatgpt_shared_snapshot
 from app.services.graph_changes import validate_change_set
 from app.services.object_storage import DocumentError, ObjectStorage
@@ -1053,14 +1054,10 @@ def run_chat_turn(
                     instructions=instructions,
                     metadata={"chat_session_id": session_id, "prompt_version": PROMPT_VERSION},
                 )
+                report_usage_dict(response.usage)
             response_id = response.response_id
             request_id = response.request_id
             _usage_add(total_usage, response.usage)
-            observe_provider_tokens(
-                provider=provider_name,
-                model=model_name,
-                usage=response.usage,
-            )
             if not response.tool_calls:
                 final_text = response.text
                 break

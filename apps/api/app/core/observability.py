@@ -52,6 +52,10 @@ LOG_FIELDS = (
     "vector_chunk_count",
     "exception_type",
     "exception_location",
+    "input_tokens",
+    "output_tokens",
+    "cached_input_tokens",
+    "prompt_chars",
 )
 
 # Exception *messages* may carry credentials, document content or raw URLs, so they are
@@ -186,33 +190,51 @@ def observe_provider_call(
 
 @contextmanager
 def provider_observation(*, provider: str, model: str, operation: str) -> Iterator[None]:
+    # Nhập muộn để module quan sát không phụ thuộc tầng dịch vụ khi khởi động.
+    from app.services.ai_usage import USAGE_FIELDS, collect_usage, record_call
+
     started = time.monotonic()
     outcome = "success"
-    try:
-        yield
-    except Exception:
-        outcome = "error"
-        raise
-    finally:
-        duration_seconds = time.monotonic() - started
-        observe_provider_call(
-            provider=provider,
-            model=model,
-            operation=operation,
-            duration_seconds=duration_seconds,
-            outcome=outcome,
-        )
-        logging.getLogger("research.provider").info(
-            "AI provider call completed",
-            extra={
-                "action": "provider.call.completed",
-                "provider": provider,
-                "model": model,
-                "operation": operation,
-                "outcome": outcome,
-                "duration_ms": round(duration_seconds * 1000, 2),
-            },
-        )
+    with collect_usage() as usage:
+        try:
+            yield
+        except Exception:
+            outcome = "error"
+            raise
+        finally:
+            duration_seconds = time.monotonic() - started
+            observe_provider_call(
+                provider=provider,
+                model=model,
+                operation=operation,
+                duration_seconds=duration_seconds,
+                outcome=outcome,
+            )
+            observe_provider_tokens(provider=provider, model=model, usage=usage)
+            token_fields = {key: usage[key] for key in USAGE_FIELDS if key in usage}
+            logging.getLogger("research.provider").info(
+                "AI provider call completed",
+                extra={
+                    "action": "provider.call.completed",
+                    "provider": provider,
+                    "model": model,
+                    "operation": operation,
+                    "outcome": outcome,
+                    "duration_ms": round(duration_seconds * 1000, 2),
+                    **token_fields,
+                },
+            )
+            record_call(
+                {
+                    "operation": operation[:80],
+                    "provider": provider[:50],
+                    "model": model[:120],
+                    "outcome": outcome,
+                    "latency_ms": round(duration_seconds * 1000),
+                    "cache_hit": bool(usage.get("cache_hit")),
+                    **{key: usage.get(key) for key in USAGE_FIELDS},
+                }
+            )
 
 
 def observe_provider_tokens(*, provider: str, model: str, usage: dict[str, Any]) -> None:

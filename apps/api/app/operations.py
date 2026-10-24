@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.db import SessionLocal
 from app.models import User
 from app.schemas.auth import UserCreate, UserUpdate
+from app.services.ai_usage_report import ai_usage_report
 from app.services.auth import create_user, serialize_user, update_user
 from app.services.documents import build_object_storage
 from app.services.graph_chat import PROMPT_VERSION
@@ -66,10 +67,17 @@ def main() -> None:
     password_parser = subparsers.add_parser("set-password")
     password_parser.add_argument("--email", required=True)
     password_parser.add_argument("--password-stdin", action="store_true", required=True)
+    usage_parser = subparsers.add_parser("ai-usage-report")
+    usage_parser.add_argument("--since-hours", type=float, default=24.0)
     migration_parser = subparsers.add_parser("migrate-objects")
     migration_parser.add_argument("--mode", choices=["plan", "execute", "verify"], required=True)
     migration_parser.add_argument("--confirm-copy-only", action="store_true")
     args = parser.parse_args()
+    if args.command == "ai-usage-report":
+        with SessionLocal() as db:
+            report = ai_usage_report(db, since_hours=args.since_hours)
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return
     if args.command == "verify-graph":
         with SessionLocal() as db:
             report = check_graph_invariants(db)

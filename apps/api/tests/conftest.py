@@ -15,6 +15,10 @@ from app.core.runtime_controls import rate_limiter
 from app.db import Base, get_db
 from app.main import app
 from app.services.ai import EnrichmentResult, enrichment_prompt
+from app.services.ai_usage import set_recorder
+
+# Số liệu lời gọi AI mặc định ghi qua SessionLocal riêng; test dùng DB trong bộ nhớ nên bỏ qua.
+set_recorder(lambda _row: None)
 
 
 class DeterministicTestProvider:

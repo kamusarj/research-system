@@ -5,8 +5,9 @@ import time
 from typing import Any
 
 from app.core.config import settings
-from app.core.observability import observe_provider_tokens, provider_observation
+from app.core.observability import provider_observation
 from app.schemas.documents import DocumentBrainstormRead, DocumentBrainstormRequest
+from app.services.ai_usage import report_usage_dict
 from app.services.graph_chat import redact_cloud_text
 from app.services.object_storage import DocumentError
 from app.services.providers.openai_graph_chat import GraphChatProvider, graph_chat_provider
@@ -119,6 +120,7 @@ def brainstorm_document(
             instructions=instructions,
             metadata={"surface": "document-editor", "prompt_version": PROMPT_VERSION},
         )
+        report_usage_dict(response.usage)
     if response.tool_calls:
         raise DocumentError(
             "CHAT_PROVIDER_FAILED", "Document brainstorm returned an unexpected tool call", 502
@@ -126,7 +128,6 @@ def brainstorm_document(
     content = response.text.strip()
     if not content:
         raise DocumentError("CHAT_PROVIDER_FAILED", "Document brainstorm returned no text", 502)
-    observe_provider_tokens(provider=provider_name, model=runtime.model, usage=response.usage)
     _ = started  # Timing is captured by provider_observation without logging content.
     return DocumentBrainstormRead(
         content=content,
