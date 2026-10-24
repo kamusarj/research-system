@@ -92,7 +92,7 @@ def test_slow_drip_source_hits_the_total_deadline(monkeypatch):
     )
     real_client = httpx.Client
     monkeypatch.setattr(
-        source_http.httpx, "Client", lambda **kwargs: real_client(transport=transport, **kwargs)
+        source_http.httpx, "Client", lambda **kwargs: real_client(**{**kwargs, "transport": transport})
     )
 
     with pytest.raises(SourceError) as raised:
