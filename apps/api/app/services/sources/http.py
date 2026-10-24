@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
+import httpcore
 import httpx
 
 from app.core.config import settings
@@ -200,6 +201,41 @@ def validate_public_url(url: str) -> None:
             raise SourceError("INVALID_URL", "Private or local network URLs are not allowed")
 
 
+class PinnedPublicBackend(httpcore.SyncBackend):
+    """Kết nối TCP tới đúng địa chỉ công khai vừa kiểm tra, không để httpx phân giải lại.
+
+    Kiểm tra địa chỉ rồi để thư viện tự phân giải lần nữa khi kết nối tạo khe hở DNS rebinding:
+    bản ghi đổi sang 127.0.0.1/mạng nội bộ giữa hai lần tra. Ở đây tên miền chỉ được phân giải
+    một lần, mọi địa chỉ phải là công khai và socket nối thẳng tới địa chỉ đó. TLS vẫn dùng tên
+    miền gốc cho SNI và xác minh chứng chỉ.
+    """
+
+    def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+        try:
+            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except socket.gaierror as exc:
+            raise SourceError("INVALID_URL", "The URL host could not be resolved") from exc
+        addresses = list(dict.fromkeys(info[4][0] for info in infos))
+        if not addresses or not all(_is_global(address) for address in addresses):
+            raise SourceError("INVALID_URL", "Private or local network URLs are not allowed")
+        last_error: Exception | None = None
+        for address in addresses:
+            try:
+                return super().connect_tcp(
+                    address, port, timeout, local_address, socket_options
+                )
+            except httpcore.ConnectError as exc:
+                last_error = exc
+        raise last_error or httpcore.ConnectError("No address could be connected")
+
+
+def public_transport() -> httpx.HTTPTransport:
+    transport = httpx.HTTPTransport()
+    # httpx không mở tham số chọn network backend; thay backend của pool kết nối.
+    transport._pool._network_backend = PinnedPublicBackend()
+    return transport
+
+
 def assert_peer_is_public(response: httpx.Response) -> None:
     """Confirm the connection actually landed on a public address.
 
@@ -331,6 +367,7 @@ def fetch_public(
             with httpx.Client(
                 follow_redirects=False,
                 timeout=httpx.Timeout(settings.intake_request_timeout_seconds),
+                transport=public_transport(),
             ) as client:
                 with client.stream("GET", current_url, headers=request_headers) as response:
                     if response.status_code in {301, 302, 303, 307, 308}:

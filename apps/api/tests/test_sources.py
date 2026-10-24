@@ -800,3 +800,40 @@ def test_graph_api_applies_hard_limit_and_keeps_unique_expansion(client):
     expanded = client.get(f"/api/v1/graph/nodes/{root_id}/neighbors?limit=10").json()
     ids = [node["id"] for node in expanded["nodes"]]
     assert len(ids) == len(set(ids))
+
+
+def test_pinned_backend_connects_only_to_the_validated_public_address(monkeypatch):
+    """DNS rebinding: the address checked is the address dialled; no second lookup."""
+    import socket
+
+    import httpcore
+
+    from app.services.sources.errors import SourceError
+    from app.services.sources.http import PinnedPublicBackend
+
+    lookups = iter(
+        [
+            [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))],
+            [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))],
+        ]
+    )
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: next(lookups))
+    dialled: list[str] = []
+    monkeypatch.setattr(
+        httpcore.SyncBackend,
+        "connect_tcp",
+        lambda self, host, *args, **kwargs: dialled.append(host),
+    )
+    backend = PinnedPublicBackend()
+    backend.connect_tcp("rebind.example", 443)
+    assert dialled == ["93.184.216.34"]
+    with pytest.raises(SourceError) as rebound:
+        backend.connect_tcp("rebind.example", 443)
+    assert rebound.value.code == "INVALID_URL"
+    assert dialled == ["93.184.216.34"]
+
+
+def test_public_transport_uses_the_pinned_backend():
+    from app.services.sources.http import PinnedPublicBackend, public_transport
+
+    assert isinstance(public_transport()._pool._network_backend, PinnedPublicBackend)
