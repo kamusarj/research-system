@@ -539,11 +539,13 @@ def test_service_account_research_scopes(client, monkeypatch, agent_enabled):
     started = client.post("/api/v1/research-runs", json=question, headers=bearer(runner_account))
     assert started.status_code == 202, started.text
     run_id = started.json()["id"]
-    assert client.get(f"/api/v1/research-runs/{run_id}", headers=bearer(reader)).status_code == 200
-    assert (
-        client.get(f"/api/v1/research-runs/{run_id}/events", headers=bearer(reader)).status_code
-        == 200
-    )
+    own = client.get(f"/api/v1/research-runs/{run_id}", headers=bearer(runner_account))
+    assert own.status_code == 200
+    events = client.get(f"/api/v1/research-runs/{run_id}/events", headers=bearer(runner_account))
+    assert events.status_code == 200
+    # Token đọc của tài khoản khác không thấy câu hỏi của lượt này.
+    assert client.get(f"/api/v1/research-runs/{run_id}", headers=bearer(reader)).status_code == 404
+    assert client.get("/api/v1/research-runs", headers=bearer(reader)).json()["total"] == 0
     assert client.get("/api/v1/research", headers=bearer(reader)).status_code == 403
     assert (
         client.post(
@@ -630,3 +632,10 @@ def test_failed_attempts_still_count_against_the_call_budget(db, agent_enabled):
         runner.retry_run(db, run)
     assert getattr(active.value, "code", "") == "RESEARCH_RUN_ACTIVE"
     assert other.status == "queued"
+
+
+def test_users_cannot_request_the_weaker_naive_variant(client, agent_enabled):
+    response = client.post(
+        "/api/v1/research-runs", json={"question": "AI agents cho y tế ra sao?", "variant": "naive"}
+    )
+    assert response.status_code == 422

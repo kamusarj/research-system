@@ -7,7 +7,8 @@ from pydantic import BaseModel, Field, field_validator
 class ResearchRunCreate(BaseModel):
     question: str = Field(min_length=10, max_length=1000)
     knowledge_gap_id: str | None = Field(default=None, max_length=36)
-    variant: Literal["optimized", "naive"] = "optimized"
+    # Biến thể "naive" (không kiểm tra suy luận, không khử trùng) chỉ dành cho lệnh eval.
+    variant: Literal["optimized"] = "optimized"
 
     @field_validator("question")
     @classmethod

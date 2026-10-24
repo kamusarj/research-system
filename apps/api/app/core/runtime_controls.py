@@ -105,7 +105,7 @@ RATE_POLICIES: tuple[tuple[str, re.Pattern[str], RatePolicy], ...] = (
     ),
     (
         "POST",
-        re.compile(r"^/api/v1/(?:research-runs|gaps/[^/]+/research-run)/?$"),
+        re.compile(r"^/api/v1/(?:research-runs(?:/[^/]+/retry)?|gaps/[^/]+/research-run)/?$"),
         RatePolicy("research-run", "rate_limit_research_runs_per_window"),
     ),
     (

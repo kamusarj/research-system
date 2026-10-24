@@ -90,6 +90,7 @@ def test_wildcard_disables_host_check(client, monkeypatch):
         ("/api/v1/collector/sources/abc/run", "collector-run"),
         ("/api/v1/research-runs", "research-run"),
         ("/api/v1/gaps/abc/research-run", "research-run"),
+        ("/api/v1/research-runs/abc/retry", "research-run"),
     ],
 )
 def test_ai_spending_routes_are_rate_limited(path, bucket):
@@ -128,3 +129,20 @@ def test_suffix_entries_trust_tunnel_subdomains(client, monkeypatch):
         headers={"Host": "api:8000", "X-Forwarded-Host": "trycloudflare.com.attacker.example"},
     )
     assert lookalike.status_code == 400
+
+
+def test_configured_cross_origin_web_app_may_mutate(client, monkeypatch):
+    monkeypatch.setattr(settings, "api_trusted_hosts", "testserver")
+    monkeypatch.setattr(settings, "api_cors_origins", "https://app.example.com")
+    allowed = client.post(
+        "/api/v1/research",
+        json={},
+        headers={"Sec-Fetch-Site": "same-site", "Origin": "https://app.example.com"},
+    )
+    assert allowed.status_code != 403
+    blocked = client.post(
+        "/api/v1/research",
+        json={},
+        headers={"Sec-Fetch-Site": "cross-site", "Origin": "https://evil.example.com"},
+    )
+    assert blocked.status_code == 403

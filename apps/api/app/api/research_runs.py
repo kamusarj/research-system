@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.core.identity import current_principal, has_role
 from app.db import SessionLocal, get_db
@@ -41,6 +42,7 @@ def get_run(db: Session, run_id: str) -> ResearchRun:
     run = db.get(ResearchRun, run_id)
     if run is None:
         raise DocumentError("RESEARCH_RUN_NOT_FOUND", "Không tìm thấy lượt nghiên cứu", 404)
+    _ensure_visible(run)
     return run
 
 
@@ -49,6 +51,17 @@ def _ensure_owner_or_creator(run: ResearchRun) -> None:
     if principal is None or principal.id == run.created_by or has_role(principal.role, "owner"):
         return
     raise DocumentError("ACCESS_DENIED", "Chỉ người tạo hoặc chủ sở hữu được thao tác", 403)
+
+
+def _ensure_visible(run: ResearchRun) -> None:
+    """Token dịch vụ (skill nhóm) chỉ thấy lượt do chính nó tạo, không thấy câu hỏi người khác."""
+    principal = current_principal()
+    if (
+        principal is not None
+        and principal.auth_kind == "service"
+        and run.created_by != principal.id
+    ):
+        raise DocumentError("RESEARCH_RUN_NOT_FOUND", "Không tìm thấy lượt nghiên cứu", 404)
 
 
 def serialize_run(run: ResearchRun) -> ResearchRunRead:
@@ -110,6 +123,9 @@ def list_runs(
     page_size: int = Query(20, ge=1, le=100),
 ) -> ResearchRunList:
     statement = select(ResearchRun)
+    principal = current_principal()
+    if principal is not None and principal.auth_kind == "service":
+        mine = True
     if mine:
         principal = current_principal()
         statement = statement.where(
@@ -187,6 +203,19 @@ def run_events(
     return _events(db, run_id, after)
 
 
+def _ensure_exists(run_id: str) -> None:
+    with SessionLocal() as db:
+        get_run(db, run_id)
+
+
+def _poll(run_id: str, cursor: int) -> tuple[list[ResearchRunEventRead], str]:
+    # Truy vấn đồng bộ chạy trong threadpool: chờ pool DB không được chặn event loop của uvicorn.
+    with SessionLocal() as db:
+        events = _events(db, run_id, cursor)
+        run = db.get(ResearchRun, run_id)
+        return events, run.status if run else "failed"
+
+
 @router.get("/{run_id}/events/stream")
 async def run_event_stream(
     run_id: str,
@@ -196,8 +225,7 @@ async def run_event_stream(
 ) -> StreamingResponse:
     """Server-Sent Events. Mỗi vòng dùng phiên DB ngắn để luồng mở không giữ kết nối pool; tự
     đóng sau 150 giây (proxy Next.js cắt ở 180 giây), trình duyệt nối lại bằng Last-Event-ID."""
-    with SessionLocal() as db:
-        get_run(db, run_id)
+    await run_in_threadpool(_ensure_exists, run_id)
     cursor = max(after, int(last_event_id) if last_event_id and last_event_id.isdigit() else 0)
 
     async def stream() -> AsyncIterator[str]:
@@ -208,10 +236,7 @@ async def run_event_stream(
         while time.monotonic() - started < SSE_MAX_SECONDS:
             if await request.is_disconnected():
                 return
-            with SessionLocal() as db:
-                events = _events(db, run_id, cursor)
-                run = db.get(ResearchRun, run_id)
-                status = run.status if run else "failed"
+            events, status = await run_in_threadpool(_poll, run_id, cursor)
             for event in events:
                 cursor = event.id
                 payload = json.dumps(event.model_dump(mode="json"), ensure_ascii=False)

@@ -36,7 +36,7 @@ export function contentSecurityPolicy(dev = process.env.NODE_ENV !== "production
     "img-src": ["'self'", "data:", "blob:", "https:"],
     "font-src": ["'self'", "data:"],
     "connect-src": ["'self'", ...(apiOrigin ? [apiOrigin] : []), ...(dev ? ["ws:", "wss:"] : [])],
-    "frame-src": ["'self'", "blob:"],
+    "frame-src": ["'self'", "blob:", ...(apiOrigin ? [apiOrigin] : [])],
     "object-src": ["'self'", "blob:"],
     "media-src": ["'self'", "blob:"],
     "worker-src": ["'self'", "blob:"],

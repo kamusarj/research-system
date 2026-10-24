@@ -56,15 +56,20 @@ class TestHostRateLimit:
 
 
 class TestRobots:
+    @staticmethod
+    def _serve(monkeypatch, handler) -> None:
+        # robots.txt đi qua transport ghim IP như mọi lần tải nguồn; giả lập chính transport đó.
+        monkeypatch.setattr(
+            "app.services.sources.http.public_transport", lambda: httpx.MockTransport(handler)
+        )
+
     def _policy(self, monkeypatch, body: str | None, status_code: int = 200) -> RobotsPolicy:
-        def fake_get(url, timeout=None, follow_redirects=None):
+        def handler(request):
             if body is None:
                 raise httpx.ConnectError("robots.txt is unreachable")
-            return httpx.Response(
-                status_code, text=body, request=httpx.Request("GET", url)
-            )
+            return httpx.Response(status_code, text=body, request=request)
 
-        monkeypatch.setattr("app.services.sources.politeness.httpx.get", fake_get)
+        self._serve(monkeypatch, handler)
         monkeypatch.setattr(settings, "intake_respect_robots", True)
         return RobotsPolicy("ResearchSystem")
 
@@ -94,13 +99,11 @@ class TestRobots:
     def test_robots_is_fetched_once_per_host(self, monkeypatch):
         calls: list[str] = []
 
-        def counting_get(url, timeout=None, follow_redirects=None):
-            calls.append(url)
-            return httpx.Response(
-                200, text="User-agent: *\nDisallow:", request=httpx.Request("GET", url)
-            )
+        def handler(request):
+            calls.append(str(request.url))
+            return httpx.Response(200, text="User-agent: *\nDisallow:", request=request)
 
-        monkeypatch.setattr("app.services.sources.politeness.httpx.get", counting_get)
+        self._serve(monkeypatch, handler)
         monkeypatch.setattr(settings, "intake_respect_robots", True)
         policy = RobotsPolicy("ResearchSystem")
 

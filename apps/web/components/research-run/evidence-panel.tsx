@@ -48,7 +48,7 @@ export function EvidencePanel({
             {selected.source.title || selected.source.url}
           </a>
           {selected.source.suspicious && (
-            <p className="notice warning-notice">Trang này chứa đoạn văn cố điều khiển AI; mọi nhận định từ nó đã qua bước kiểm tra suy luận.</p>
+            <p className="notice warning-notice">Trang này chứa đoạn văn cố điều khiển AI. Nhận định từ nó chỉ được dùng khi qua bước kiểm tra suy luận; hãy đối chiếu câu gốc bên dưới khi duyệt.</p>
           )}
           <ul className="evidence-quotes">
             {selected.claims.map((claim) => (

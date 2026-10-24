@@ -60,7 +60,11 @@ class RequestGuardMiddleware(BaseHTTPMiddleware):
             fetch_site = request.headers.get("sec-fetch-site")
             origin = request.headers.get("origin")
             if fetch_site is not None:
-                allowed = fetch_site in SAME_ORIGIN_FETCH_SITES
+                # Ứng dụng web chạy ở origin khác (NEXT_PUBLIC_API_URL tách riêng) phải nằm trong
+                # API_CORS_ORIGINS; mọi trang khác vẫn bị chặn.
+                allowed = fetch_site in SAME_ORIGIN_FETCH_SITES or (
+                    origin is not None and origin in settings.cors_origins
+                )
             elif origin is not None:
                 allowed = trusted is None or (
                     origin != "null" and host_trusted(_hostname(urlsplit(origin).netloc), trusted)

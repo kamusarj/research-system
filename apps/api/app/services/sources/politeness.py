@@ -20,6 +20,8 @@ import httpx
 
 from app.core.config import settings
 
+ROBOTS_MAX_BYTES = 512 * 1024
+
 
 def host_of(url: str) -> str:
     return (urlparse(url).hostname or "").casefold()
@@ -75,13 +77,26 @@ class RobotsPolicy:
         parser: urllib.robotparser.RobotFileParser | None = None
         try:
             robots_url = urlunparse((parsed.scheme, parsed.netloc, "/robots.txt", "", "", ""))
-            # Không theo chuyển hướng (có thể trỏ vào mạng nội bộ) và chỉ phân tích 512 KiB đầu.
-            response = httpx.get(robots_url, timeout=5.0, follow_redirects=False)
-            if response.status_code < 300:
-                parser = urllib.robotparser.RobotFileParser()
-                body = response.content[: 512 * 1024].decode("utf-8", "replace")
-                parser.parse(body.splitlines())
-        except httpx.HTTPError:
+            # Không theo chuyển hướng (có thể trỏ vào mạng nội bộ), kết nối ghim tới địa chỉ công
+            # khai đã kiểm (chống DNS rebinding) và chỉ đọc tối đa 512 KiB.
+            from app.services.sources.errors import SourceError
+            from app.services.sources.http import public_transport
+
+            with httpx.Client(
+                transport=public_transport(), timeout=5.0, follow_redirects=False
+            ) as client:
+                with client.stream("GET", robots_url) as response:
+                    if response.status_code < 300:
+                        body = b""
+                        for chunk in response.iter_bytes():
+                            body += chunk
+                            if len(body) >= ROBOTS_MAX_BYTES:
+                                break
+                        parser = urllib.robotparser.RobotFileParser()
+                        parser.parse(
+                            body[:ROBOTS_MAX_BYTES].decode("utf-8", "replace").splitlines()
+                        )
+        except (httpx.HTTPError, SourceError):
             parser = None
         with self._lock:
             self._cache[host] = (now, parser)

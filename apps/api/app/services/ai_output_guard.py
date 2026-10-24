@@ -49,6 +49,38 @@ def credential_kinds(value: Any) -> list[str]:
     return sorted(found)
 
 
+REDACTION = "[REDACTED_CREDENTIAL]"
+
+
+def redact_credentials(value: Any, *, provider: str) -> Any:
+    """Thay chuỗi giống khóa bằng nhãn che. Che thay vì từ chối: tài liệu hướng dẫn hay chứa khóa
+    mẫu, từ chối cả câu trả lời sẽ làm hỏng mọi lượt xử lý nguồn đó."""
+    kinds = credential_kinds(value)
+    if not kinds:
+        return value
+    logger.warning(
+        "AI output credential-like content redacted",
+        extra={
+            "action": "ai.output.credential_redacted",
+            "provider": provider,
+            "outcome": ",".join(kinds),
+        },
+    )
+    return _redact(value)
+
+
+def _redact(value: Any) -> Any:
+    if isinstance(value, str):
+        for pattern in CREDENTIAL_PATTERNS.values():
+            value = pattern.sub(REDACTION, value)
+        return value
+    if isinstance(value, dict):
+        return {key: _redact(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact(item) for item in value]
+    return value
+
+
 def reject_credentials(value: Any, *, provider: str) -> None:
     kinds = credential_kinds(value)
     if kinds:
