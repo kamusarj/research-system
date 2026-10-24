@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import nextConfig, {
+  contentSecurityPolicy,
   DEFAULT_API_PROXY_TIMEOUT_MS,
   SECURITY_HEADERS,
   resolveApiProxyTimeout,
@@ -22,4 +23,17 @@ it("applies baseline security headers to every route and hides the framework ban
   const rules = await nextConfig.headers!();
   expect(rules).toEqual([{ source: "/:path*", headers: SECURITY_HEADERS }]);
   expect(SECURITY_HEADERS.map((header) => header.key)).toContain("X-Content-Type-Options");
+});
+
+it("ships a CSP that blocks foreign scripts, exfiltration and framing", () => {
+  const production = contentSecurityPolicy(false, "/api/v1");
+  expect(production).toContain("default-src 'self'");
+  expect(production).toContain("connect-src 'self';");
+  expect(production).toContain("frame-ancestors 'self'");
+  expect(production).toContain("base-uri 'self'");
+  expect(production).not.toContain("unsafe-eval");
+  expect(production).not.toMatch(/script-src[^;]*https:/);
+  expect(contentSecurityPolicy(false, "https://api.example.com/api/v1")).toContain("connect-src 'self' https://api.example.com");
+  expect(contentSecurityPolicy(true, undefined)).toContain("'unsafe-eval'");
+  expect(SECURITY_HEADERS.map((header) => header.key)).toContain("Content-Security-Policy");
 });
