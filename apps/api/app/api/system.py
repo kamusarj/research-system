@@ -16,6 +16,7 @@ def feature_flags() -> FeatureFlagsRead:
         and settings.graph_v2_documents_enabled,
         graph_chat=settings.graph_v2_enabled and settings.graph_v2_chat_enabled,
         rate_limits=settings.rate_limit_enabled,
+        research_agent=settings.research_agent_enabled,
     )
 
 

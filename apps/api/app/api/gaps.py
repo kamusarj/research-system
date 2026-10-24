@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -15,6 +15,7 @@ from app.services.gaps import (
     serialize_gap,
 )
 from app.services.research import serialize_research
+from app.services.research_agent.runner import create_run
 
 router = APIRouter(prefix="/gaps", tags=["knowledge-gaps"])
 deep_research_router = APIRouter(prefix="/deep-research", tags=["knowledge-gaps"])
@@ -99,3 +100,15 @@ def request(gap_id: str, db: Session = Depends(get_db)) -> dict:
 @deep_research_router.post("/{research_id}/approve")
 def approve(research_id: str, db: Session = Depends(get_db)) -> dict:
     return serialize_research(approve_deep_research(db, research_id)).model_dump()
+
+
+@router.post("/{gap_id}/research-run", status_code=202)
+def start_gap_research_run(gap_id: str, db: Session = Depends(get_db)) -> dict:
+    """Chạy pipeline nghiên cứu sâu cho khoảng trống; báo cáo nháp sẽ gắn lại vào khoảng trống."""
+    gap = get_gap(db, gap_id)
+    if gap.status in {"dismissed", "filled"}:
+        raise HTTPException(409, f"Cannot research a gap in status {gap.status}")
+    question = f"{gap.title}: {gap.reason}"[:1000]
+    run = create_run(db, question, knowledge_gap_id=gap.id)
+    return {"id": run.id, "status": run.status, "stage": run.stage}
+

@@ -468,3 +468,25 @@ def test_api_disabled_returns_503(client, monkeypatch):
     response = client.post("/api/v1/research-runs", json={"question": "Tính năng đang tắt?"})
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "FEATURE_DISABLED"
+
+
+def test_gap_starts_research_run_and_report_links_back(client, db, agent_enabled):
+    from app.models import KnowledgeGap
+
+    gap = KnowledgeGap(
+        key="gap:insurance-agent-evaluation",
+        title="Đánh giá agent cho bảo hiểm",
+        concept_key="insurance-agent-evaluation",
+        reason="Chưa có nghiên cứu đã duyệt nào về đánh giá agent trong bảo hiểm.",
+        coverage_count=0,
+    )
+    db.add(gap)
+    db.commit()
+    started = client.post(f"/api/v1/gaps/{gap.id}/research-run")
+    assert started.status_code == 202, started.text
+    run = db.get(ResearchRun, started.json()["id"])
+    assert run.knowledge_gap_id == gap.id
+    run_to_completion(db, run)
+    db.refresh(gap)
+    assert gap.deep_research_id == run.report_research_id
+    assert client.get("/api/v1/system/features").json()["research_agent"] is True

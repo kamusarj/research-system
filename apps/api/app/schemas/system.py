@@ -6,6 +6,7 @@ class FeatureFlagsRead(BaseModel):
     document_workspaces: bool
     graph_chat: bool
     rate_limits: bool
+    research_agent: bool = False
 
 
 class GraphInvariantReport(BaseModel):
