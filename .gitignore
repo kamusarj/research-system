@@ -30,3 +30,6 @@ scripts/bin/gitleaks
 # Cấu hình triển khai nhóm và bản sao lưu cục bộ
 .env.team
 backups/
+
+# Báo cáo do scripts/research-report.sh lưu cục bộ
+research-reports/

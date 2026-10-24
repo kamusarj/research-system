@@ -490,3 +490,56 @@ def test_gap_starts_research_run_and_report_links_back(client, db, agent_enabled
     db.refresh(gap)
     assert gap.deep_research_id == run.report_research_id
     assert client.get("/api/v1/system/features").json()["research_agent"] is True
+
+
+def test_service_account_research_scopes(client, monkeypatch, agent_enabled):
+    reader = client.post(
+        "/api/v1/auth/service-accounts",
+        json={
+            "name": "Research reader",
+            "source_namespace": "skill-read",
+            "scopes": ["research:read"],
+        },
+    ).json()
+    runner_account = client.post(
+        "/api/v1/auth/service-accounts",
+        json={
+            "name": "Research skill",
+            "source_namespace": "skill-run",
+            "scopes": ["research:run", "research:read"],
+        },
+    ).json()
+    intake_only = client.post(
+        "/api/v1/auth/service-accounts",
+        json={"name": "Intake", "source_namespace": "skill-intake", "scopes": ["intake:submit"]},
+    ).json()
+    monkeypatch.setattr(settings, "auth_mode", "local")
+    client.cookies.clear()
+
+    def bearer(account):
+        return {"Authorization": f"Bearer {account['token']}"}
+
+    question = {"question": "Thị trường AI agents cho bán lẻ ra sao?"}
+    assert (
+        client.post("/api/v1/research-runs", json=question, headers=bearer(reader)).status_code
+        == 403
+    )
+    assert (
+        client.post("/api/v1/research-runs", json=question, headers=bearer(intake_only)).status_code
+        == 403
+    )
+    started = client.post("/api/v1/research-runs", json=question, headers=bearer(runner_account))
+    assert started.status_code == 202, started.text
+    run_id = started.json()["id"]
+    assert client.get(f"/api/v1/research-runs/{run_id}", headers=bearer(reader)).status_code == 200
+    assert (
+        client.get(f"/api/v1/research-runs/{run_id}/events", headers=bearer(reader)).status_code
+        == 200
+    )
+    assert client.get("/api/v1/research", headers=bearer(reader)).status_code == 403
+    assert (
+        client.post(
+            f"/api/v1/research-runs/{run_id}/retry", headers=bearer(runner_account)
+        ).status_code
+        == 403
+    )

@@ -44,6 +44,10 @@ OWNER_PATTERNS = (
 )
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 SERVICE_RECEIPT_READ = re.compile(r"^/api/v1/intake/receipts/[^/]+/?$")
+SERVICE_RESEARCH_RUN_WRITE = re.compile(r"^/api/v1/research-runs(?:/[^/]+/cancel)?/?$")
+SERVICE_RESEARCH_RUN_READ = re.compile(
+    r"^/api/v1/research-runs(?:/[^/]+(?:/events(?:/stream)?|/export\.md)?)?/?$"
+)
 SERVICE_RECEIPT_DOCUMENT = re.compile(r"^/api/v1/intake/receipts/[^/]+/documents/?$")
 
 
@@ -97,6 +101,11 @@ def _service_scope_allowed(principal: Principal, method: str, path: str) -> bool
         return "intake:read-own" in scopes
     if method == "GET" and SERVICE_RECEIPT_READ.fullmatch(path):
         return "intake:read-own" in scopes
+    # Skill /research-report của nhóm chạy nghiên cứu sâu bằng token dịch vụ; không có quyền duyệt.
+    if method == "POST" and SERVICE_RESEARCH_RUN_WRITE.fullmatch(path):
+        return "research:run" in scopes
+    if method == "GET" and SERVICE_RESEARCH_RUN_READ.fullmatch(path):
+        return "research:read" in scopes
     return False
 
 

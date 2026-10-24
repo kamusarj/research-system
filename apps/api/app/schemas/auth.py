@@ -4,7 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 UserRole = Literal["owner", "researcher", "viewer"]
-ServiceAccountScope = Literal["intake:submit", "intake:read-own"]
+ServiceAccountScope = Literal["intake:submit", "intake:read-own", "research:run", "research:read"]
 
 
 def _normalize_email(value: str) -> str:
@@ -77,7 +77,7 @@ class ServiceAccountCreate(BaseModel):
     scopes: list[ServiceAccountScope] = Field(
         default_factory=lambda: ["intake:submit", "intake:read-own"],
         min_length=1,
-        max_length=2,
+        max_length=4,
     )
     expires_at: datetime | None = None
 
