@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from pypdf import PdfWriter
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.main import app
 from app.models import (
     AIOutput,
@@ -563,12 +564,19 @@ def test_worker_extracts_evaluates_and_builds_isolated_evidence_graph(client, db
     assert 150 <= len(ai_node_payload["summary"]) <= 200
 
 
-def test_low_fit_readable_document_still_builds_isolated_graph(client, db, tmp_path, monkeypatch):
+@pytest.mark.parametrize("skip_low_fit", [True, False])
+def test_low_fit_readable_document_still_builds_isolated_graph(
+    client, db, tmp_path, monkeypatch, skip_low_fit
+):
+    monkeypatch.setattr(settings, "document_graph_skip_low_fit", skip_low_fit)
+    calls: list[str] = []
+
     class LowFitGraphProvider:
         name = "low-fit-graph-provider"
         version = "test"
 
         def complete_json(self, prompt, schema):
+            calls.append(schema.__name__)
             if schema.__name__ == "PaperFitProviderAssessment":
                 return schema.model_validate(
                     {
@@ -626,7 +634,16 @@ def test_low_fit_readable_document_still_builds_isolated_graph(client, db, tmp_p
     evaluation = db.query(PaperEvaluation).filter_by(workspace_id=created["id"]).one()
     assert evaluation.fit_score < 40
     assert evaluation.decision == "not_relevant"
+    # The isolated graph always exists; only the semantic AI extraction is optional.
     assert db.query(DocumentGraphNode).filter_by(workspace_id=created["id"]).count() >= 2
+    workspace = db.get(DocumentGraphWorkspace, created["id"])
+    codes = {item["code"] for item in workspace.extraction_limitations}
+    if skip_low_fit:
+        assert calls == ["PaperFitProviderAssessment"]
+        assert "GRAPH_SEMANTIC_SKIPPED_LOW_FIT" in codes
+    else:
+        assert calls == ["PaperFitProviderAssessment", "DocumentGraphExtraction"]
+        assert "GRAPH_SEMANTIC_SKIPPED_LOW_FIT" not in codes
 
 
 def test_ai_research_compares_document_nodes_and_prepares_governed_change_set(client, db, tmp_path):

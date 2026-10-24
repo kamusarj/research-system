@@ -368,29 +368,49 @@ def process_document(
         graph_node_count = 0
         graph_edge_count = 0
         # The document graph is an isolated analysis workspace, not canonical publication.
-        # Every readable source receives one; paper-fit still guides review/promotion priority.
+        # Every readable source receives one. When paper-fit routed it to not_relevant, only the
+        # server-built structure (document and sections) is kept: the semantic extraction call
+        # would re-send up to 50k characters for nodes nobody is expected to review.
         if extracted.text.strip() and runtime is not None:
             _set_stage(db, workspace, "graph_building")
-            semantic = _complete_document_graph_with_recovery(
-                runtime,
-                research.title,
-                extracted,
-                job_id,
+            skip_semantic = (
+                settings.document_graph_skip_low_fit and result.decision == "not_relevant"
             )
+            if skip_semantic:
+                semantic = DocumentGraphExtraction()
+            else:
+                semantic = _complete_document_graph_with_recovery(
+                    runtime,
+                    research.title,
+                    extracted,
+                    job_id,
+                )
             graph_node_count, graph_edge_count, limitations = replace_document_graph(
                 db, workspace, research.title, extracted, semantic
             )
+            if skip_semantic:
+                limitations = [
+                    *limitations,
+                    {
+                        "code": "GRAPH_SEMANTIC_SKIPPED_LOW_FIT",
+                        "message": (
+                            "Chỉ dựng cấu trúc tài liệu, không trích xuất khái niệm bằng AI vì "
+                            "paper-fit xếp tài liệu vào nhóm không liên quan."
+                        ),
+                    },
+                ]
             workspace.extraction_limitations = limitations
-            _save_ai_output(
-                db,
-                research.id,
-                "document-graph",
-                runtime,
-                DOCUMENT_GRAPH_PROMPT_VERSION,
-                input_hash,
-                semantic.model_dump(mode="json"),
-                result.confidence,
-            )
+            if not skip_semantic:
+                _save_ai_output(
+                    db,
+                    research.id,
+                    "document-graph",
+                    runtime,
+                    DOCUMENT_GRAPH_PROMPT_VERSION,
+                    input_hash,
+                    semantic.model_dump(mode="json"),
+                    result.confidence,
+                )
 
         # RAG is an independently rebuildable projection. A provider failure is
         # recorded on the workspace but must not discard successful extraction,

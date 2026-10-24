@@ -84,6 +84,8 @@ class Settings(BaseSettings):
     ai_request_timeout: float = 120
     # Trần token đầu ra cho tác vụ JSON có cấu trúc (chống tiêu thụ không giới hạn).
     ai_max_output_tokens: int = Field(default=8192, ge=256, le=65536)
+    # Không gọi AI dựng đồ thị cho tài liệu paper-fit đánh giá `not_relevant` (điểm < 40).
+    document_graph_skip_low_fit: bool = True
     # Cầu nối trên máy chủ chạy Claude Code/Codex/Antigravity bằng gói đăng nhập của chủ máy
     # (`app/ai_cli_bridge.py`). Để trống URL là tắt ba nhà cung cấp này.
     ai_cli_bridge_url: str = ""
