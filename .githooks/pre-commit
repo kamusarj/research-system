@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Chặn commit nếu phần staged chứa secret. Cài bằng scripts/install-git-hooks.sh.
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+GITLEAKS="$ROOT/scripts/bin/gitleaks"
+[ -x "$GITLEAKS" ] || GITLEAKS="$(command -v gitleaks || true)"
+if [ -z "$GITLEAKS" ]; then
+  echo "pre-commit: chưa có gitleaks. Chạy scripts/install-git-hooks.sh rồi commit lại." >&2
+  exit 1
+fi
+
+if ! "$GITLEAKS" git --staged --redact --no-banner --config "$ROOT/.gitleaks.toml" "$ROOT"; then
+  echo "pre-commit: phát hiện chuỗi giống secret trong phần staged. Gỡ secret, dùng biến môi" >&2
+  echo "trường hoặc tệp secret; nếu là dương tính giả, thêm allowlist vào .gitleaks.toml." >&2
+  exit 1
+fi

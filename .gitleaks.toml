@@ -1,0 +1,13 @@
+# Cấu hình gitleaks: dùng bộ luật mặc định, chỉ bỏ qua các hằng số đã xác minh không phải secret.
+title = "Business AI Agents"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Hằng số công khai bị luật chung nhận nhầm là khóa"
+regexTarget = "match"
+regexes = [
+  '''PASSWORD_ALPHABET = "[A-Za-z0-9]+"''',
+  '''DISCORD_INTAKE_NAMESPACE=discord''',
+]

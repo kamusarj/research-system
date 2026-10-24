@@ -1,0 +1,38 @@
+name: security
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Quét secret toàn bộ lịch sử (gitleaks ghim phiên bản)
+        run: |
+          scripts/install-git-hooks.sh
+          scripts/bin/gitleaks git --redact --no-banner --config .gitleaks.toml .
+
+  dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: npm audit (production)
+        working-directory: apps/web
+        run: npm audit --omit=dev --audit-level=high
+      - uses: astral-sh/setup-uv@v6
+      - name: pip-audit (API và Discord bot, từ uv.lock)
+        run: |
+          for app in apps/api apps/discord-bot; do
+            (cd "$app" && uv export --frozen --no-dev --no-emit-project --no-hashes -o /tmp/reqs.txt \
+              && uvx pip-audit==2.9.0 -r /tmp/reqs.txt --no-deps --disable-pip)
+          done
