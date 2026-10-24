@@ -2,9 +2,19 @@
 
 ## Now
 
-- [ ] Linh duyệt kế hoạch tối ưu toàn diện (audit 2026-10-24) và trả lời: commit baseline working
-  tree, nguồn web search cho pipeline báo cáo, chế độ đăng nhập cục bộ, quota cho eval. Sau đó
-  ưu tiên vá `next` 15.5.28 + `pypdf`/`pillow` và bind cổng 127.0.0.1.
+Tối ưu toàn diện (2026-10-24, `US-OPTIMIZATION-PROGRAM`): mã đã xong; còn các bước sau.
+
+- [ ] Linh tạo chủ sở hữu cục bộ (`make local-owner NAME=... EMAIL=...`), rồi agent đặt
+  `AUTH_MODE=local` trong `.env` và restart API/worker (cổng đã chỉ nghe 127.0.0.1).
+- [ ] Linh quyết định bật nghiên cứu sâu cho người dùng: `RESEARCH_AGENT_ENABLED=true` trong `.env`,
+  restart API/worker (SearXNG đã chạy). Chế độ nhóm cần `RESEARCH_AGENT_PROVIDER` là API.
+- [ ] Gõ `/reload-plugins` để dùng plugin `frontend-design`, `claude-security`; chạy
+  `scripts/install-git-hooks.sh` trên mỗi máy của nhóm.
+- [ ] Container API/worker chạy non-root, mount mã chỉ đọc, cài cầu nối CLI ngoài cây mã (S9).
+- [ ] Thu hẹp sandbox cầu nối CLI: lọc keyring cho agy, không cho shell Codex đọc `auth.json` (S7).
+- [ ] Giảm token pipeline nghiên cứu (eval: +42% so với naive do kiểm tra suy luận); `/chat` mobile
+  Lighthouse 81; chạy bộ Playwright E2E trên stack thử nghiệm riêng.
+- [ ] Push nhánh `feature/research-system-mvp` khi Linh đồng ý.
 
 Triển khai cho nhóm (2026-10-14): mã, cấu hình và runbook đã sẵn sàng; còn các bước của chủ sở hữu.
 

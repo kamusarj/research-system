@@ -31,4 +31,14 @@ cd apps/web && npm run typecheck && npm run lint && npm test
 
 ## Acceptance Evidence
 
-Ghi sau khi xác minh.
+2026-10-24 (chi tiết: `AI_LOGS/SESSIONS/2026-10-24-0052-optimization-audit.md`):
+
+| Tiêu chí | Trước | Sau | Đạt |
+|---|---|---|---|
+| Thời gian 1 research task (eval 8 câu) | naive 135 giây | optimized 80 giây (−41%) | Có |
+| Token/chi phí | naive 55,8K/lượt; chat 13,8K ký tự/lượt gọi | optimized 79,4K (+42%, có kiểm tra suy luận); chat −16% | Chưa |
+| Claim có nguồn kèm link | không có luồng báo cáo | 100% câu (8/8 lượt, kiểm tra cứng) | Có |
+| Lighthouse ≥ 90 | mobile Perf 77–93 | mobile ≥90 trừ /chat 81; desktop ≥94; A11y 94–100 | Gần đạt |
+| Lỗ hổng Critical/High | 1 Critical + nhiều High | npm/pip audit 0; review High đã sửa | Có |
+| Secret trong repo/lịch sử | 0 | 0 + hook pre-commit + CI | Có |
+| Test | API 460, web 180 | API 541, web 192, bot 56 | Có |

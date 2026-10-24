@@ -2,22 +2,37 @@
 
 ## Current Goal
 
-- Ngày 2026-10-24 chương trình tối ưu toàn diện (Harness intake #13 / high-risk
-  `US-OPTIMIZATION-PROGRAM`, story `docs/stories/optimization-program/`). Đã commit từng bước trên
-  `feature/research-system-mvp` (snapshot nền `dce73d7` + các commit sau): pre-commit gitleaks
-  (`scripts/install-git-hooks.sh`, `.github/workflows/security.yml`); vá `next` 15.5.28, `sharp`,
-  `source-map-js`, vitest 4.1.12 (Vite 8/oxc) → npm audit 0; vá `pypdf` 6.21.2, `pillow` 13,
-  `urllib3`, `certifi`, `aiohttp`, `multidict`, pytest 9 → pip-audit 0; Dockerfile API cài từ
-  `uv.lock` có kiểm hash (ảnh api/worker đã build lại); cổng 13000/18000 chỉ nghe 127.0.0.1;
-  `RequestGuardMiddleware` chặn DNS rebinding/CSRF cross-site; bảng `ai_call_metrics` (migration
-  `4a6c8e0b2d35`, đã áp dụng sau pg_dump `~/business-ai-agents-backups/*-before-ai-call-metrics`) +
-  `python -m app.operations ai-usage-report`; prompt chuẩn `services/prompts.py` (system chung,
-  `<source>` đã làm sạch, max_tokens, temperature 0, chặn tự duyệt khi có dấu hiệu injection,
-  Discord auto-approve mặc định tắt); chat giảm 16% ký tự mỗi lượt gọi; tài liệu không liên quan
-  bỏ lời gọi AI trích xuất ngữ nghĩa. API 484/484, bot 55/55, web vitest 180/180.
-  **Chưa xong**: bật `AUTH_MODE=local` cục bộ chờ Linh chạy `make local-owner`; pipeline câu hỏi →
-  báo cáo (SearXNG), UI/dark mode, bảo mật Medium còn lại. **Đĩa còn ~0,7 GB** sau khi build lại ảnh
-  API (ảnh mới lưu cả nén + giải nén) — cần Linh giải phóng trước khi kéo ảnh SearXNG.
+- Ngày 2026-10-24 hoàn tất chương trình tối ưu toàn diện research/UI/bảo mật (Harness intake #13 /
+  high-risk `US-OPTIMIZATION-PROGRAM` / DEC-064 / decision 0051), 36 commit trên
+  `feature/research-system-mvp` sau snapshot `dce73d7` (chưa push). Chính:
+  - **Nghiên cứu sâu** (`services/research_agent/`, `/research/new`, `/research/runs/<id>`,
+    `/api/v1/research-runs`, `POST /gaps/{id}/research-run`): planner → searcher (SearXNG profile
+    `research-agent` + kho đã duyệt, lọc độ liên quan, cache, khử trùng) → verifier (trích dẫn nguyên
+    văn + kiểm tra suy luận, không phán quyết = không dùng) → writer (máy chủ gắn `[n](url)`, từ chối
+    câu không nguồn). Báo cáo là bản nháp cần duyệt. Runtime cục bộ: SearXNG đang chạy, khóa
+    `SEARXNG_SECRET` + `API_TRUSTED_HOSTS=.trycloudflare.com` đã thêm vào `.env`; **tính năng vẫn tắt**
+    (`RESEARCH_AGENT_ENABLED=false`) chờ chủ sở hữu bật. Engine Bing/Brave/DDG/Google/Qwant không
+    dùng được từ IP này (rác hoặc chặn) — xem `ops/searxng/settings.yml`.
+  - Eval thật 8 câu (`docs/evaluations/research-agent/2026-10-24-*.json`): optimized so với naive
+    thời gian −41%, độ phủ góc nhìn +12%, tên miền +20%, 100% câu có trích dẫn; token +42% (bước kiểm
+    tra suy luận). Lô trích 48K: token −8% nhưng độ phủ giảm → giữ 30K.
+  - Đo lường: `ai_call_metrics` (+ `total_tokens` cho Codex), `ai-usage-report`; chat −16% ký tự mỗi
+    lượt gọi; tài liệu "không liên quan" bỏ lời gọi trích xuất ngữ nghĩa.
+  - Bảo mật: vá `next` 15.5.28, `pypdf`, `pillow` 13, `urllib3`, vitest 4… (npm audit/pip-audit 0);
+    gitleaks pre-commit + CI; ảnh API cài từ `uv.lock`; cổng `127.0.0.1`; `RequestGuardMiddleware`;
+    prompt tách dữ liệu (`services/prompts.py`); rate limit route AI; SSRF ghim IP (cả robots.txt);
+    CSP; che chuỗi giống khóa trong đầu ra AI; team mode chỉ tin XFF từ 172.16.0.0/12; Discord không
+    ping; scope `research:run`/`research:read`. Review độc lập: 2 High + 9 Medium + phần lớn Low đã sửa.
+  - UI: token + dark mode (nút trên thanh bên), focus 2px, Inter Variable, khung vẽ ngay khi kiểm tra
+    phiên, d3 tải động, thanh điều hướng dưới trên điện thoại. Lighthouse mobile ≥90 mọi trang trừ
+    `/chat` (81); desktop ≥94.
+  - Migration áp dụng: `4a6c8e0b2d35`, `5b7d9f1c3e46`, `6c8e0a2b4d57` (sao lưu pg_dump trong
+    `~/business-ai-agents-backups/*-before-*`). Đã xóa (được duyệt) ảnh `aquasec/trivy:0.65.0`,
+    `c2-app-047-app:latest` và container dừng `c2-app-047-app-1` (giữ volume) để có chỗ cho SearXNG.
+  - Kiểm chứng: API 541/541, web 192/192, bot 56/56; Playwright E2E chưa chạy (bộ E2E ghi dữ liệu thật).
+  **Còn lại**: bật `AUTH_MODE=local` (chủ sở hữu chạy `make local-owner`), bật nghiên cứu sâu, chạy
+  container non-root + mount mã chỉ đọc, thu hẹp sandbox CLI, tối ưu `/chat` mobile, giảm token pipeline.
+  Lưu ý: Docker nằm trên `/` (còn ~2 GB), `/home` là phân vùng khác.
   Session: `AI_LOGS/SESSIONS/2026-10-24-0052-optimization-audit.md`.
 
 - Ngày 2026-10-24 thêm embedding qua Gemini API miễn phí (Harness intake #12 / high-risk
