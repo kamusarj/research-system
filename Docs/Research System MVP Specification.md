@@ -1,16 +1,16 @@
-# Research System MVP Specification
+# Đặc tả MVP của Hệ thống nghiên cứu
 
-This document turns `Research System Implementation Plan.md` into the concrete contract used by the local-first implementation.
+Tài liệu này chuyển `Research System Implementation Plan.md` thành hợp đồng triển khai cụ thể cho hệ thống ưu tiên chạy cục bộ.
 
-## Product scope
+## Phạm vi sản phẩm
 
-The MVP lets a small research team create Markdown research, move it through review, discover approved knowledge, inspect its graph, enrich it with an AI provider, ingest RSS items, and curate exportable training examples.
+MVP cho phép một nhóm nhỏ tạo tài liệu nghiên cứu Markdown, đưa tài liệu qua quy trình kiểm duyệt, tìm tri thức đã duyệt, xem đồ thị, làm giàu nội dung bằng nhà cung cấp AI và tiếp nhận mục RSS.
 
-Out of scope: production SSO, cloud deployment, Kubernetes, a fine-tuning runner, multi-source crawling, and autonomous deep research.
+Ngoài phạm vi: SSO cho môi trường thật, triển khai đám mây, Kubernetes, thu thập hàng loạt từ nhiều nguồn và tác nhân nghiên cứu sâu tự chủ.
 
-## Research lifecycle
+## Vòng đời nghiên cứu
 
-Allowed transitions are:
+Các bước chuyển trạng thái được phép:
 
 ```text
 draft -> in-review -> approved -> archived
@@ -18,52 +18,44 @@ draft -> in-review -> approved -> archived
    +----------+
 ```
 
-Updates to an existing item always create a version snapshot. Archived records are soft-deleted and remain addressable by ID. Human-edited summary and tags are only changed by explicit API input; AI results are stored separately until accepted.
+Mỗi lần cập nhật một mục hiện có đều tạo bản chụp phiên bản. Bản ghi lưu trữ chỉ bị xóa mềm và vẫn có thể truy cập bằng ID. Tóm tắt và thẻ do con người sửa chỉ thay đổi khi API nhận yêu cầu rõ ràng; kết quả AI được lưu riêng cho đến khi người dùng chấp nhận.
 
-## Required metadata
+## Siêu dữ liệu bắt buộc
 
-- Required: `title`, `type`, `collection_method`.
-- Optional: `summary`, Markdown `content`, `source_url`, `authors`, `tags`, arbitrary JSON `metadata`.
-- Types: `internal-research`, `reference`, `deep-research-report`.
-- Collection methods: `manual`, `auto-collected`, `ai-researched`.
+- Bắt buộc: `title`, `type`, `collection_method`.
+- Không bắt buộc: `summary`, nội dung Markdown `content`, `source_url`, `authors`, `tags` và JSON `metadata` tùy ý.
+- Loại tài liệu: `internal-research`, `reference`, `deep-research-report`.
+- Cách thu thập: `manual`, `auto-collected`, `ai-researched`.
 
-Authentication and RBAC are deferred. The approve endpoint represents an authorized researcher action in this local single-team MVP.
+Xác thực và phân quyền theo vai trò được hoãn trong phạm vi ban đầu. Điểm cuối duyệt đại diện cho thao tác của nhà nghiên cứu có quyền trong MVP cục bộ dành cho một nhóm.
 
-## Search and graph behavior
+## Hành vi tìm kiếm và đồ thị
 
-- Default library/search results exclude archived items.
-- Search matches title, summary, content, authors, and normalized tags case-insensitively.
-- Filters compose with pagination and support status, type, collection method, tag, and creation date.
-- Graph projection contains approved research nodes, normalized tag/concept nodes, author nodes, collector-source nodes, and manual research relations.
-- The graph is rebuilt from the primary database on every request in the MVP and can later be projected into Neo4j.
+- Kết quả thư viện và tìm kiếm mặc định không gồm mục đã lưu trữ.
+- Tìm kiếm không phân biệt hoa thường trên tiêu đề, tóm tắt, nội dung, tác giả và thẻ đã chuẩn hóa.
+- Bộ lọc kết hợp với phân trang, hỗ trợ trạng thái, loại, cách thu thập, thẻ và ngày tạo.
+- Bản chiếu đồ thị gồm nút nghiên cứu đã duyệt, nút thẻ/khái niệm đã chuẩn hóa, nút tác giả, nút nguồn thu thập và quan hệ nghiên cứu thủ công.
+- Trong MVP, đồ thị được dựng lại từ cơ sở dữ liệu chính theo mỗi yêu cầu và sau này có thể chiếu sang Neo4j.
 
-## AI behavior
+## Hành vi AI
 
-- `mock` is the deterministic default provider for local use and tests.
-- `ollama` is optional and selected through environment configuration.
-- Every output stores model/prompt provenance, input hash, JSON output, confidence, and creation time.
-- AI enrichment never overwrites a human field automatically.
+- Mistral là nhà cung cấp mặc định; có thể chọn Ollama hoặc nhà cung cấp đám mây khác qua cấu hình môi trường.
+- Ứng dụng không có nhà cung cấp AI giả chạy trong tiến trình. Nếu chưa cấu hình được nhà cung cấp thật hoặc không thể kết nối, thao tác AI sẽ tạm khóa và báo rõ trạng thái.
+- Mỗi đầu ra lưu nguồn gốc mô hình/câu lệnh, mã băm đầu vào, JSON đầu ra, độ tin cậy và thời điểm tạo.
+- AI không bao giờ tự ghi đè trường do con người biên tập.
 
-## Collector behavior
+## Hành vi bộ thu thập
 
-- RSS is the only MVP source adapter.
-- A manual run discovers and normalizes entries, deduplicates by source/external ID and URL, evaluates deterministically, and routes entries by configured thresholds.
-- Score `>= auto_approve_threshold` is ingested; score below `auto_reject_threshold` is rejected; the rest enters the review queue.
+- RSS là bộ điều hợp nguồn duy nhất trong phạm vi MVP ban đầu.
+- Một lượt chạy thủ công sẽ phát hiện và chuẩn hóa mục, loại trùng theo nguồn/ID ngoài và URL, đánh giá theo quy tắc xác định rồi định tuyến theo ngưỡng cấu hình.
+- Điểm `>= auto_approve_threshold` sẽ được tiếp nhận; điểm dưới `auto_reject_threshold` bị từ chối; phần còn lại vào hàng chờ duyệt.
 
-## Training data governance
+## Nghiệm thu cục bộ
 
-- Every event/example records provenance.
-- Examples require `pii_status` and `policy_status` before acceptance.
-- Accepted examples may be assigned to a versioned dataset and exported as JSONL.
-- Holdout examples are excluded from synthetic-generation workflows; this MVP does not implement synthetic generation.
-
-## Local acceptance
-
-1. `docker compose up --build` starts PostgreSQL, API, and frontend.
-2. API health returns success and frontend can call it.
-3. Research draft can be created, submitted, approved, searched, and viewed in graph output.
-4. Editing produces a version snapshot.
-5. Mock enrichment records provenance and returns suggestions without overwriting research.
-6. RSS entries can be reviewed or ingested.
-7. A governed training example can be accepted, included in a dataset, and exported as JSONL.
-8. Backend tests, frontend lint/type checks, and production build pass.
+1. `docker compose up --build` khởi động PostgreSQL, API và giao diện web.
+2. Kiểm tra sức khỏe API thành công và giao diện gọi được API.
+3. Có thể tạo, gửi duyệt, phê duyệt, tìm kiếm bản nháp nghiên cứu và xem nó trong đồ thị.
+4. Mỗi lần chỉnh sửa tạo một bản chụp phiên bản.
+5. Việc làm giàu bằng nhà cung cấp thật lưu nguồn gốc và trả đề xuất mà không ghi đè nghiên cứu.
+6. Có thể duyệt hoặc tiếp nhận các mục RSS.
+7. Kiểm thử backend, kiểm tra lint/kiểu của frontend và bản dựng production đều đạt.

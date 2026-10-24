@@ -3,12 +3,39 @@ from types import SimpleNamespace
 from pydantic import BaseModel, SecretStr
 from test_research import create_item
 
+from app.core.config import settings
 from app.models import AIOutput, EmbeddingChunk, Evaluation
-from app.services.ai import MistralProvider
+from app.services.ai import DeepSeekProvider, MistralProvider, OllamaProvider, OpenAIProvider
 
 
 class StructuredProbe(BaseModel):
     label: str
+
+
+def test_ollama_provider_disables_thinking_and_sends_schema(monkeypatch):
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"response": '{"label":"local"}'}
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return Response()
+
+    monkeypatch.setattr("app.services.ai.httpx.post", fake_post)
+
+    result = OllamaProvider().complete_json("Return a label.", StructuredProbe)
+
+    assert result.label == "local"
+    assert captured["url"].endswith("/api/generate")
+    assert captured["json"]["think"] is False
+    assert captured["json"]["options"]["temperature"] == 0
+    assert "label" in captured["json"]["format"]["properties"]
 
 
 def test_mistral_provider_uses_strict_json_schema(monkeypatch):
@@ -39,6 +66,60 @@ def test_mistral_provider_uses_strict_json_schema(monkeypatch):
     assert "label" in response_format["json_schema"]["schema"]["properties"]
 
 
+def test_openai_responses_disables_storage_and_uses_text_format(monkeypatch):
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"output_text": '{"label":"openai"}'}
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return Response()
+
+    monkeypatch.setattr("app.services.ai.httpx.post", fake_post)
+    monkeypatch.setattr(settings, "openai_api_key", SecretStr("unit-test-key"))
+
+    result = OpenAIProvider().complete_json("Return a label.", StructuredProbe)
+
+    assert result.label == "openai"
+    assert captured["url"] == "https://api.openai.com/v1/responses"
+    assert captured["json"]["store"] is False
+    assert captured["json"]["text"]["format"]["type"] == "json_schema"
+    assert captured["json"]["text"]["format"]["strict"] is True
+
+
+def test_deepseek_provider_uses_json_mode_with_the_requested_schema(monkeypatch):
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": '{"label":"deepseek"}'}}]}
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return Response()
+
+    monkeypatch.setattr("app.services.ai.httpx.post", fake_post)
+    monkeypatch.setattr(DeepSeekProvider, "api_key", SecretStr("unit-test-key"))
+
+    result = DeepSeekProvider().complete_json("Return a JSON label.", StructuredProbe)
+
+    assert result.label == "deepseek"
+    assert captured["url"] == "https://api.deepseek.com/chat/completions"
+    assert captured["json"]["response_format"] == {"type": "json_object"}
+    assert captured["json"]["model"] == DeepSeekProvider.model
+    assert '"label"' in captured["json"]["messages"][1]["content"]
+
+
 def test_ai_enrichment_preserves_human_fields_until_accepted(client, db):
     item = create_item(client, "RAG Agent", ["Human Tag"])
     response = client.post(f"/api/v1/ai/enrich/{item['id']}")
@@ -67,7 +148,7 @@ def test_rss_collector_routes_review_items(client, db, monkeypatch):
             }
         ],
     )
-    monkeypatch.setattr("app.services.collector.feedparser.parse", lambda _: feed)
+    monkeypatch.setattr("app.services.collector.fetch_feed", lambda _: feed)
     source = client.post(
         "/api/v1/collector/sources",
         json={

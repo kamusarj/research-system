@@ -1,6 +1,9 @@
+import logging
+import time
 from datetime import datetime
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -9,13 +12,23 @@ from app.schemas.graph import GraphQuery, GraphResponse
 from app.services.gaps import list_gaps, serialize_gap
 from app.services.graph import (
     ego_graph,
+    filter_graph,
     graph_clusters,
     graph_projection,
     graph_repository,
-    shortest_path,
+    ontology_graph_projection,
 )
+from app.services.projection_state import mark_projection_rebuilt, projection_status
 
 router = APIRouter(prefix="/graph", tags=["graph"])
+logger = logging.getLogger("research-api.graph-projection")
+
+GRAPH_READ_CACHE_CONTROL = "private, max-age=30, stale-while-revalidate=60"
+
+
+def _cache_graph_read(response: Response) -> None:
+    response.headers["Cache-Control"] = GRAPH_READ_CACHE_CONTROL
+    response.headers["Vary"] = "Cookie, Authorization"
 
 
 def _csv(value: str | None) -> set[str]:
@@ -32,6 +45,7 @@ def _query(
     limit: int,
     depth: int,
     root_node_id: str | None,
+    view: Literal["relationship", "hierarchy"],
 ) -> GraphQuery:
     return GraphQuery(
         query=query,
@@ -43,10 +57,11 @@ def _query(
         limit=limit,
         depth=depth,
         root_node_id=root_node_id,
+        view=view,
     )
 
 
-@router.get("", response_model=GraphResponse)
+@router.get("", response_model=GraphResponse, dependencies=[Depends(_cache_graph_read)])
 def graph(
     query: str | None = None,
     node_types: str | None = None,
@@ -54,9 +69,10 @@ def graph(
     min_confidence: float = Query(0, ge=0, le=1),
     date_from: datetime | None = None,
     date_to: datetime | None = None,
-    limit: int = Query(settings.graph_default_node_limit, ge=1, le=1000),
+    limit: int = Query(settings.graph_default_node_limit, ge=1, le=settings.graph_max_node_limit),
     depth: int = Query(1, ge=1, le=settings.graph_max_depth),
     root_node_id: str | None = None,
+    view: Literal["relationship", "hierarchy"] = "relationship",
     db: Session = Depends(get_db),
 ) -> GraphResponse:
     return graph_repository().query(
@@ -71,11 +87,30 @@ def graph(
             limit,
             depth,
             root_node_id,
+            view,
         ),
     )
 
 
-@router.get("/node/{node_id:path}", response_model=GraphResponse)
+@router.get("/system", response_model=GraphResponse, dependencies=[Depends(_cache_graph_read)])
+def system_graph(
+    limit: int = Query(settings.graph_max_node_limit, ge=1, le=settings.graph_max_node_limit),
+    db: Session = Depends(get_db),
+) -> GraphResponse:
+    """Return the canonical Business AI Agents ontology as a separate read-only map."""
+
+    return filter_graph(
+        ontology_graph_projection(db),
+        GraphQuery(limit=limit, depth=settings.graph_max_depth, view="hierarchy"),
+        "postgres-system",
+    )
+
+
+@router.get(
+    "/node/{node_id:path}",
+    response_model=GraphResponse,
+    dependencies=[Depends(_cache_graph_read)],
+)
 def node(node_id: str, db: Session = Depends(get_db)) -> GraphResponse:
     return graph_repository().query(
         db,
@@ -87,7 +122,11 @@ def node(node_id: str, db: Session = Depends(get_db)) -> GraphResponse:
     )
 
 
-@router.get("/nodes/{node_id:path}/neighbors", response_model=GraphResponse)
+@router.get(
+    "/nodes/{node_id:path}/neighbors",
+    response_model=GraphResponse,
+    dependencies=[Depends(_cache_graph_read)],
+)
 def neighbors(
     node_id: str,
     limit: int = Query(10, ge=1, le=settings.graph_max_neighbors),
@@ -100,7 +139,7 @@ def neighbors(
     )
 
 
-@router.get("/search", response_model=GraphResponse)
+@router.get("/search", response_model=GraphResponse, dependencies=[Depends(_cache_graph_read)])
 def search(
     query: str = Query(min_length=1),
     node_types: str | None = None,
@@ -132,7 +171,7 @@ def path(
     target: str = Query(alias="to"),
     db: Session = Depends(get_db),
 ) -> dict:
-    return shortest_path(graph_projection(db), source, target)
+    return graph_repository().path(db, source, target)
 
 
 @router.get("/stats")
@@ -140,10 +179,14 @@ def stats(db: Session = Depends(get_db)) -> dict:
     if settings.graph_data_provider == "postgres":
         projection = graph_projection(db)
     else:
-        projection = graph_repository().query(
-            db,
-            GraphQuery(limit=settings.graph_max_node_limit),
-        ).model_dump()
+        projection = (
+            graph_repository()
+            .query(
+                db,
+                GraphQuery(limit=settings.graph_max_node_limit),
+            )
+            .model_dump()
+        )
     by_type: dict[str, int] = {}
     for graph_node in projection["nodes"]:
         by_type[graph_node["type"]] = by_type.get(graph_node["type"], 0) + 1
@@ -157,7 +200,7 @@ def stats(db: Session = Depends(get_db)) -> dict:
 
 @router.get("/clusters")
 def clusters(db: Session = Depends(get_db)) -> list[dict]:
-    return graph_clusters(graph_projection(db))
+    return graph_repository().clusters(db)
 
 
 @router.get("/gaps")
@@ -167,10 +210,28 @@ def gaps(db: Session = Depends(get_db)) -> list[dict]:
 
 @router.post("/rebuild")
 def rebuild(db: Session = Depends(get_db)) -> dict:
-    projection = graph_projection(db)
-    return {
-        "status": "rebuilt",
-        "provider": settings.graph_data_provider,
-        "nodes": len(projection["nodes"]),
-        "edges": len(projection["edges"]),
-    }
+    started = time.monotonic()
+    result = graph_repository().rebuild(db)
+    views = result.get("views", {})
+    logger.info(
+        "Graph projection rebuilt",
+        extra={
+            "action": "graph.projection.rebuilt",
+            "provider": result["provider"],
+            "outcome": "success",
+            "duration_ms": round((time.monotonic() - started) * 1000, 2),
+            "graph_node_count": result["nodes"],
+            "graph_edge_count": result["edges"],
+            "hierarchy_node_count": views.get("hierarchy", {}).get("nodes", 0),
+            "hierarchy_edge_count": views.get("hierarchy", {}).get("edges", 0),
+        },
+    )
+    mark_projection_rebuilt(db, target="graph")
+    return result
+
+
+@router.get("/projections")
+def projections(db: Session = Depends(get_db)) -> list[dict]:
+    """Report which derived projections are behind the canonical graph."""
+
+    return projection_status(db)

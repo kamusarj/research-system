@@ -1,50 +1,245 @@
+# API và worker đọc cùng một cấu hình `Settings`, nên dùng chung một khối biến môi trường.
+# Thêm biến mới tại đây thay vì từng service để worker không lệch cấu hình với API.
+x-app-environment: &app-environment
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-research}:${POSTGRES_PASSWORD:-research}@database:5432/${POSTGRES_DB:-research}
+  DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-5}
+  DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-5}
+  DATABASE_POOL_TIMEOUT_SECONDS: ${DATABASE_POOL_TIMEOUT_SECONDS:-30}
+  DATABASE_POOL_RECYCLE_SECONDS: ${DATABASE_POOL_RECYCLE_SECONDS:-1800}
+  API_WORKERS: ${API_WORKERS:-1}
+  API_RELOAD: ${API_RELOAD:-true}
+  DEPLOYMENT_ENVIRONMENT: ${DEPLOYMENT_ENVIRONMENT:-local}
+  SECRET_FILES_DIR: ${SECRET_FILES_DIR:-/run/secrets}
+  API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost:3000}
+  AI_PROVIDER: ${AI_PROVIDER:-mistral}
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+  OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-luna}
+  GRAPH_CHAT_DEFAULT_PROVIDER: ${GRAPH_CHAT_DEFAULT_PROVIDER:-deepseek}
+  CHAT_MAX_HISTORY_MESSAGES: ${CHAT_MAX_HISTORY_MESSAGES:-20}
+  CHAT_MAX_CONTEXT_CHARS: ${CHAT_MAX_CONTEXT_CHARS:-16000}
+  CHAT_MAX_TOOL_LOOPS: ${CHAT_MAX_TOOL_LOOPS:-4}
+  CHAT_MAX_PROPOSALS: ${CHAT_MAX_PROPOSALS:-20}
+  CHAT_MAX_MESSAGE_CHARS: ${CHAT_MAX_MESSAGE_CHARS:-12000}
+  CHAT_MAX_OUTPUT_TOKENS: ${CHAT_MAX_OUTPUT_TOKENS:-1500}
+  CHAT_REDACTION_ENABLED: ${CHAT_REDACTION_ENABLED:-true}
+  CHAT_IMPORT_MAX_HTML_BYTES: ${CHAT_IMPORT_MAX_HTML_BYTES:-2000000}
+  CHAT_IMPORT_MAX_MESSAGES: ${CHAT_IMPORT_MAX_MESSAGES:-400}
+  CHAT_IMPORT_MAX_IMAGES: ${CHAT_IMPORT_MAX_IMAGES:-50}
+  CHAT_IMPORT_MAX_IMAGE_BYTES: ${CHAT_IMPORT_MAX_IMAGE_BYTES:-10000000}
+  CHAT_IMPORT_MAX_TOTAL_IMAGE_BYTES: ${CHAT_IMPORT_MAX_TOTAL_IMAGE_BYTES:-50000000}
+  CHAT_IMPORT_MAX_TOTAL_CHARS: ${CHAT_IMPORT_MAX_TOTAL_CHARS:-400000}
+  CHAT_IMPORT_TIMEOUT_SECONDS: ${CHAT_IMPORT_TIMEOUT_SECONDS:-20}
+  CHAT_IMPORT_MAX_REDIRECTS: ${CHAT_IMPORT_MAX_REDIRECTS:-2}
+  CHAT_IMPORT_IMAGE_RETRIES: ${CHAT_IMPORT_IMAGE_RETRIES:-2}
+  CHAT_IMPORT_IMAGE_RETRY_BACKOFF_SECONDS: ${CHAT_IMPORT_IMAGE_RETRY_BACKOFF_SECONDS:-0.25}
+  GRAPH_V2_ENABLED: ${GRAPH_V2_ENABLED:-true}
+  GRAPH_V2_DOCUMENTS_ENABLED: ${GRAPH_V2_DOCUMENTS_ENABLED:-true}
+  GRAPH_V2_CHAT_ENABLED: ${GRAPH_V2_CHAT_ENABLED:-true}
+  RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+  RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
+  RATE_LIMIT_UPLOADS_PER_WINDOW: ${RATE_LIMIT_UPLOADS_PER_WINDOW:-10}
+  RATE_LIMIT_ANALYSIS_PER_WINDOW: ${RATE_LIMIT_ANALYSIS_PER_WINDOW:-10}
+  RATE_LIMIT_CHAT_PER_WINDOW: ${RATE_LIMIT_CHAT_PER_WINDOW:-30}
+  RATE_LIMIT_APPLY_PER_WINDOW: ${RATE_LIMIT_APPLY_PER_WINDOW:-10}
+  API_SLOW_REQUEST_MS: ${API_SLOW_REQUEST_MS:-2000}
+  HTTP_GZIP_MINIMUM_SIZE: ${HTTP_GZIP_MINIMUM_SIZE:-1024}
+  HTTP_GZIP_COMPRESSLEVEL: ${HTTP_GZIP_COMPRESSLEVEL:-5}
+  LOG_FORMAT: ${LOG_FORMAT:-json}
+  METRICS_ENABLED: ${METRICS_ENABLED:-false}
+  METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN:-}
+  AUTH_MODE: ${AUTH_MODE:-disabled}
+  AUTH_SESSION_HOURS: ${AUTH_SESSION_HOURS:-12}
+  AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-research_session}
+  AUTH_CSRF_COOKIE_NAME: ${AUTH_CSRF_COOKIE_NAME:-research_csrf}
+  AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
+  AUTH_COOKIE_SAMESITE: ${AUTH_COOKIE_SAMESITE:-lax}
+  AUTH_LOGIN_ATTEMPTS_PER_WINDOW: ${AUTH_LOGIN_ATTEMPTS_PER_WINDOW:-5}
+  DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+  DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-pro}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-5.6-luna}
+  MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+  MISTRAL_MODEL: ${MISTRAL_MODEL:-mistral-large-latest}
+  # Claude Code/Codex/Antigravity qua cầu nối trên máy chủ (`apps/api/app/ai_cli_bridge.py`).
+  AI_CLI_BRIDGE_URL: ${AI_CLI_BRIDGE_URL:-}
+  AI_CLI_BRIDGE_TOKEN: ${AI_CLI_BRIDGE_TOKEN:-}
+  AI_CLI_TIMEOUT_SECONDS: ${AI_CLI_TIMEOUT_SECONDS:-300}
+  CLAUDE_CODE_MODEL: ${CLAUDE_CODE_MODEL:-sonnet}
+  CLAUDE_CODE_EFFORT: ${CLAUDE_CODE_EFFORT:-low}
+  CODEX_MODEL: ${CODEX_MODEL:-gpt-6-luna}
+  CODEX_EFFORT: ${CODEX_EFFORT:-low}
+  ANTIGRAVITY_MODEL: ${ANTIGRAVITY_MODEL:-gemini-3.8-flash-medium}
+  INTAKE_MAX_ATTEMPTS: ${INTAKE_MAX_ATTEMPTS:-3}
+  INTAKE_MAX_CONTENT_BYTES: ${INTAKE_MAX_CONTENT_BYTES:-2000000}
+  INTAKE_MAX_PDF_BYTES: ${INTAKE_MAX_PDF_BYTES:-25000000}
+  INTAKE_PDF_MAX_PAGES: ${INTAKE_PDF_MAX_PAGES:-80}
+  INTAKE_REQUEST_TIMEOUT_SECONDS: ${INTAKE_REQUEST_TIMEOUT_SECONDS:-20}
+  INTAKE_REQUEST_RETRIES: ${INTAKE_REQUEST_RETRIES:-2}
+  INTAKE_MAX_REDIRECTS: ${INTAKE_MAX_REDIRECTS:-5}
+  INTAKE_HOST_MIN_INTERVAL_SECONDS: ${INTAKE_HOST_MIN_INTERVAL_SECONDS:-1.0}
+  INTAKE_RESPECT_ROBOTS: ${INTAKE_RESPECT_ROBOTS:-false}
+  INTAKE_CONDITIONAL_GET: ${INTAKE_CONDITIONAL_GET:-true}
+  INTAKE_USER_AGENT: ${INTAKE_USER_AGENT:-}
+  INTAKE_ACCEPT_LANGUAGE: ${INTAKE_ACCEPT_LANGUAGE:-vi,en-US;q=0.9,en;q=0.8}
+  INTAKE_RETRY_BASE_SECONDS: ${INTAKE_RETRY_BASE_SECONDS:-30}
+  INTAKE_WORKER_POLL_SECONDS: ${INTAKE_WORKER_POLL_SECONDS:-2}
+  INTAKE_JOB_LEASE_SECONDS: ${INTAKE_JOB_LEASE_SECONDS:-300}
+  BROWSER_RENDER_ENABLED: ${BROWSER_RENDER_ENABLED:-false}
+  BROWSERLESS_WS_URL: ${BROWSERLESS_WS_URL:-ws://browserless:3000}
+  BROWSERLESS_TOKEN: ${BROWSERLESS_TOKEN:-}
+  BROWSER_RENDER_TIMEOUT_SECONDS: ${BROWSER_RENDER_TIMEOUT_SECONDS:-20}
+  BROWSER_RENDER_WAIT_MS: ${BROWSER_RENDER_WAIT_MS:-500}
+  BROWSER_RENDER_MAX_BYTES: ${BROWSER_RENDER_MAX_BYTES:-2000000}
+  OCR_ENABLED: ${OCR_ENABLED:-false}
+  OCR_COMMAND: ${OCR_COMMAND:-tesseract}
+  OCR_LANGUAGES: ${OCR_LANGUAGES:-eng+vie}
+  OCR_DPI: ${OCR_DPI:-200}
+  OCR_MAX_PIXELS: ${OCR_MAX_PIXELS:-20000000}
+  OCR_MAX_PAGES: ${OCR_MAX_PAGES:-20}
+  OCR_TIMEOUT_SECONDS: ${OCR_TIMEOUT_SECONDS:-30}
+  OCR_MIN_CHARS: ${OCR_MIN_CHARS:-40}
+  OCR_MAX_OUTPUT_CHARS: ${OCR_MAX_OUTPUT_CHARS:-120000}
+  DOCUMENT_STORAGE_BACKEND: ${DOCUMENT_STORAGE_BACKEND:-local}
+  DOCUMENT_STORAGE_DIR: ${DOCUMENT_STORAGE_DIR:-/var/lib/research-system/objects}
+  DOCUMENT_MAX_UPLOAD_BYTES: ${DOCUMENT_MAX_UPLOAD_BYTES:-20000000}
+  MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+  MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-}
+  MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-}
+  MINIO_SECURE: ${MINIO_SECURE:-true}
+  MINIO_BUCKET: ${MINIO_BUCKET:-research-documents}
+  MINIO_REGION: ${MINIO_REGION:-}
+  MINIO_AUTO_CREATE_BUCKET: ${MINIO_AUTO_CREATE_BUCKET:-false}
+  MINIO_SPOOL_MEMORY_BYTES: ${MINIO_SPOOL_MEMORY_BYTES:-8388608}
+  DOCUMENT_WORKER_MAX_ATTEMPTS: ${DOCUMENT_WORKER_MAX_ATTEMPTS:-3}
+  DOCUMENT_WORKER_RETRY_BASE_SECONDS: ${DOCUMENT_WORKER_RETRY_BASE_SECONDS:-30}
+  DOCUMENT_WORKER_LEASE_SECONDS: ${DOCUMENT_WORKER_LEASE_SECONDS:-600}
+  DOCUMENT_EXTRACT_MAX_CHARS: ${DOCUMENT_EXTRACT_MAX_CHARS:-120000}
+  DOCUMENT_GRAPH_MAX_NODES: ${DOCUMENT_GRAPH_MAX_NODES:-80}
+  DOCUMENT_GRAPH_MAX_EDGES: ${DOCUMENT_GRAPH_MAX_EDGES:-120}
+  LATEX_COMPILER_COMMAND: ${LATEX_COMPILER_COMMAND:-xelatex}
+  LATEX_COMPILE_TIMEOUT_SECONDS: ${LATEX_COMPILE_TIMEOUT_SECONDS:-20}
+  LATEX_COMPILE_MAX_SOURCE_CHARS: ${LATEX_COMPILE_MAX_SOURCE_CHARS:-200000}
+  LATEX_COMPILE_MAX_PDF_BYTES: ${LATEX_COMPILE_MAX_PDF_BYTES:-10000000}
+  GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+  GRAPH_DATA_PROVIDER: ${GRAPH_DATA_PROVIDER:-postgres}
+  GRAPH_DEFAULT_NODE_LIMIT: ${GRAPH_DEFAULT_NODE_LIMIT:-40}
+  GRAPH_MAX_NODE_LIMIT: ${GRAPH_MAX_NODE_LIMIT:-1000}
+  GRAPH_MAX_EDGE_LIMIT: ${GRAPH_MAX_EDGE_LIMIT:-4000}
+  GRAPH_MAX_DEPTH: ${GRAPH_MAX_DEPTH:-2}
+  GRAPH_MAX_NEIGHBORS: ${GRAPH_MAX_NEIGHBORS:-20}
+  GRAPH_MAX_PATH_HOPS: ${GRAPH_MAX_PATH_HOPS:-12}
+  NEO4J_URI: ${NEO4J_URI:-}
+  NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
+  NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
+  NEO4J_DATABASE: ${NEO4J_DATABASE:-neo4j}
+  NEO4J_BATCH_SIZE: ${NEO4J_BATCH_SIZE:-500}
+  NEO4J_CONNECTION_TIMEOUT_SECONDS: ${NEO4J_CONNECTION_TIMEOUT_SECONDS:-5}
+  NEO4J_RETRY_TIMEOUT_SECONDS: ${NEO4J_RETRY_TIMEOUT_SECONDS:-15}
+  SEARCH_DATA_PROVIDER: ${SEARCH_DATA_PROVIDER:-postgres}
+  VECTOR_DATA_PROVIDER: ${VECTOR_DATA_PROVIDER:-postgres}
+  MEILISEARCH_URL: ${MEILISEARCH_URL:-http://meilisearch:7700}
+  MEILISEARCH_API_KEY: ${MEILISEARCH_API_KEY:-}
+  MEILISEARCH_INDEX: ${MEILISEARCH_INDEX:-research_items}
+  MEILISEARCH_BATCH_SIZE: ${MEILISEARCH_BATCH_SIZE:-500}
+  MEILISEARCH_REQUEST_TIMEOUT_SECONDS: ${MEILISEARCH_REQUEST_TIMEOUT_SECONDS:-10}
+  MEILISEARCH_TASK_TIMEOUT_SECONDS: ${MEILISEARCH_TASK_TIMEOUT_SECONDS:-60}
+  SEARCH_EMBEDDING_PROVIDER: ${SEARCH_EMBEDDING_PROVIDER:-mistral}
+  SEARCH_EMBEDDING_MODEL: ${SEARCH_EMBEDDING_MODEL:-mistral-embed}
+  SEARCH_EMBEDDING_DIMENSIONS: ${SEARCH_EMBEDDING_DIMENSIONS:-1024}
+  SEARCH_EMBEDDING_CHUNK_CHARS: ${SEARCH_EMBEDDING_CHUNK_CHARS:-4000}
+  SEARCH_EMBEDDING_MAX_CHUNKS_PER_ITEM: ${SEARCH_EMBEDDING_MAX_CHUNKS_PER_ITEM:-32}
+  SEARCH_EMBEDDING_BATCH_SIZE: ${SEARCH_EMBEDDING_BATCH_SIZE:-32}
+  SEARCH_EMBEDDING_REQUEST_RETRIES: ${SEARCH_EMBEDDING_REQUEST_RETRIES:-2}
+  SEARCH_EMBEDDING_RETRY_BACKOFF_SECONDS: ${SEARCH_EMBEDDING_RETRY_BACKOFF_SECONDS:-0.5}
+  SEARCH_DOCUMENT_MAX_CHARS: ${SEARCH_DOCUMENT_MAX_CHARS:-120000}
+  SEARCH_MAX_RESULTS: ${SEARCH_MAX_RESULTS:-100}
+
 services:
-  database:
-    image: postgres:16-alpine
+  ollama-bridge:
+    profiles: ["local-ai"]
+    build: ./apps/api
+    network_mode: host
     environment:
-      POSTGRES_DB: research
-      POSTGRES_USER: research
-      POSTGRES_PASSWORD: research
+      OLLAMA_BRIDGE_UPSTREAM: ${OLLAMA_BRIDGE_UPSTREAM:-http://127.0.0.1:11434}
+      OLLAMA_BRIDGE_BIND: ${OLLAMA_BRIDGE_BIND:-172.17.0.1}
+      OLLAMA_BRIDGE_PORT: ${OLLAMA_BRIDGE_PORT:-11435}
+    volumes:
+      - ./apps/api:/app
+    command: sh -c "uvicorn app.ollama_bridge:app --host $${OLLAMA_BRIDGE_BIND} --port $${OLLAMA_BRIDGE_PORT}"
+
+  database:
+    image: pgvector/pgvector:0.8.5-pg16-bookworm@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-research}
+      POSTGRES_USER: ${POSTGRES_USER:-research}
+      # Chỉ có hiệu lực khi volume dữ liệu được tạo lần đầu; đổi mật khẩu sau đó cần ALTER USER.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-research}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U research -d research"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  meilisearch:
+    profiles: ["search"]
+    image: getmeili/meilisearch:v1.37.0@sha256:9cde2774864e6c19cdd09fcd2950bc01ac9a0454b6f343fffafa14faae6eb7ea
+    environment:
+      MEILI_ENV: production
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-}
+      MEILI_NO_ANALYTICS: "true"
+    expose:
+      - "7700"
+    volumes:
+      - meilisearch_data:/meili_data
+
+  browserless:
+    profiles: ["browser"]
+    image: ghcr.io/browserless/chromium@sha256:9e48bf8df71ba285f974dd9bd9effb59ce8a1e767cfe734b36a24b065ab033f4
+    environment:
+      TOKEN: ${BROWSERLESS_TOKEN:-}
+      CONCURRENT: ${BROWSERLESS_CONCURRENT:-2}
+      QUEUED: ${BROWSERLESS_QUEUE_LENGTH:-10}
+      TIMEOUT: ${BROWSERLESS_TIMEOUT_MS:-30000}
+      DEBUG: "-browserless*"
+    expose:
+      - "3000"
+
+  neo4j:
+    profiles: ["neo4j"]
+    image: neo4j:5.26.12-community@sha256:9f75e8df4325a24f00fdd7a8c0bcce650a58375049b1058e496e8b43d6c36b37
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-}
+      NEO4J_server_memory_heap_initial__size: ${NEO4J_HEAP_INITIAL_SIZE:-256m}
+      NEO4J_server_memory_heap_max__size: ${NEO4J_HEAP_MAX_SIZE:-512m}
+      NEO4J_server_memory_pagecache_size: ${NEO4J_PAGECACHE_SIZE:-256m}
+    expose:
+      - "7474"
+      - "7687"
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "echo 'RETURN 1' | cypher-shell -u neo4j -p \"$${NEO4J_AUTH#*/}\" >/dev/null 2>&1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
   api:
     build: ./apps/api
-    environment:
-      DATABASE_URL: postgresql+psycopg://research:research@database:5432/research
-      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost:3000}
-      AI_PROVIDER: ${AI_PROVIDER:-mock}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-luna}
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-pro}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-5.6-luna}
-      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
-      MISTRAL_MODEL: ${MISTRAL_MODEL:-mistral-large-latest}
-      INTAKE_MAX_ATTEMPTS: ${INTAKE_MAX_ATTEMPTS:-3}
-      INTAKE_RETRY_BASE_SECONDS: ${INTAKE_RETRY_BASE_SECONDS:-30}
-      INTAKE_WORKER_POLL_SECONDS: ${INTAKE_WORKER_POLL_SECONDS:-2}
-      INTAKE_JOB_LEASE_SECONDS: ${INTAKE_JOB_LEASE_SECONDS:-300}
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-      GRAPH_DATA_PROVIDER: ${GRAPH_DATA_PROVIDER:-postgres}
-      GRAPH_DEFAULT_NODE_LIMIT: ${GRAPH_DEFAULT_NODE_LIMIT:-40}
-      GRAPH_MAX_NODE_LIMIT: ${GRAPH_MAX_NODE_LIMIT:-100}
-      GRAPH_MAX_EDGE_LIMIT: ${GRAPH_MAX_EDGE_LIMIT:-250}
-      GRAPH_MAX_DEPTH: ${GRAPH_MAX_DEPTH:-2}
-      GRAPH_MAX_NEIGHBORS: ${GRAPH_MAX_NEIGHBORS:-20}
-      NEO4J_URI: ${NEO4J_URI:-}
-      NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
+    restart: unless-stopped
+    # Tiến trình init thu dọn tiến trình con mồ côi (xelatex/tesseract) và chuyển tiếp tín hiệu dừng.
+    init: true
+    environment: *app-environment
     depends_on:
       database:
         condition: service_healthy
@@ -52,30 +247,31 @@ services:
       - "${API_PORT:-8000}:8000"
     volumes:
       - ./apps/api:/app
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+      - document_objects:/var/lib/research-system/objects
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3).read()",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    command: >-
+      sh -ec 'alembic upgrade head;
+      if [ "$${API_RELOAD}" = "true" ]; then
+        exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload;
+      fi;
+      exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers "$${API_WORKERS}"'
 
   worker:
     build: ./apps/api
-    environment:
-      DATABASE_URL: postgresql+psycopg://research:research@database:5432/research
-      AI_PROVIDER: ${AI_PROVIDER:-mock}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-luna}
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-pro}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-5.6-luna}
-      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
-      MISTRAL_MODEL: ${MISTRAL_MODEL:-mistral-large-latest}
-      INTAKE_MAX_ATTEMPTS: ${INTAKE_MAX_ATTEMPTS:-3}
-      INTAKE_RETRY_BASE_SECONDS: ${INTAKE_RETRY_BASE_SECONDS:-30}
-      INTAKE_WORKER_POLL_SECONDS: ${INTAKE_WORKER_POLL_SECONDS:-2}
-      INTAKE_JOB_LEASE_SECONDS: ${INTAKE_JOB_LEASE_SECONDS:-300}
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    restart: unless-stopped
+    init: true
+    environment: *app-environment
     depends_on:
       database:
         condition: service_healthy
@@ -83,12 +279,43 @@ services:
         condition: service_started
     volumes:
       - ./apps/api:/app
+      - document_objects:/var/lib/research-system/objects
     command: python -m app.worker
 
-  frontend:
-    build: ./apps/web
+  # Opt-in: `docker compose --profile discord up -d discord-bot`. The gateway refuses to
+  # start without an explicit guild and channel allowlist, so an unconfigured deployment
+  # cannot quietly begin collecting from every server the bot is invited to.
+  discord-bot:
+    build: ./apps/discord-bot
+    profiles: ["discord"]
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+      RESEARCH_API_URL: http://api:8000
+      SECRETS_DIR: ${SECRET_FILES_DIR:-/run/secrets}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      RESEARCH_API_TOKEN: ${DISCORD_RESEARCH_API_TOKEN:-}
+      DISCORD_ALLOWED_GUILD_IDS: ${DISCORD_ALLOWED_GUILD_IDS:-}
+      DISCORD_ALLOWED_CHANNEL_IDS: ${DISCORD_ALLOWED_CHANNEL_IDS:-}
+      DISCORD_INTAKE_NAMESPACE: ${DISCORD_INTAKE_NAMESPACE:-discord}
+      DISCORD_INTAKE_PROVIDER: ${DISCORD_INTAKE_PROVIDER:-}
+      DISCORD_AUTO_APPROVE_LINKS: ${DISCORD_AUTO_APPROVE_LINKS:-true}
+      DISCORD_LOCALE: ${DISCORD_LOCALE:-vi}
+      DISCORD_POLL_INTERVAL_SECONDS: ${DISCORD_POLL_INTERVAL_SECONDS:-5}
+      DISCORD_POLL_ATTEMPTS: ${DISCORD_POLL_ATTEMPTS:-36}
+      DISCORD_USER_RATE_LIMIT: ${DISCORD_USER_RATE_LIMIT:-10}
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./apps/web
+      # Ảnh phát triển: mã nguồn được bind-mount đè lên /app. Bản triển khai nhóm dùng target `runner`.
+      target: dev
+    restart: unless-stopped
+    environment:
+      API_PROXY_TARGET: http://api:8000
+      API_PROXY_TIMEOUT_MS: ${API_PROXY_TIMEOUT_MS:-180000}
     depends_on:
       - api
     ports:
@@ -97,9 +324,25 @@ services:
       - ./apps/web:/app
       - frontend_modules:/app/node_modules
       - frontend_next:/app/.next
-    command: npm run dev -- --hostname 0.0.0.0
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/graph').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+    # The named node_modules volume survives image rebuilds, so sync it when package.json changes.
+    command: sh -ec "npm ls --include=dev --depth=0 >/dev/null 2>&1 || npm ci --include=dev --no-audit --no-fund; exec npm run dev -- --hostname 0.0.0.0"
 
 volumes:
   postgres_data:
   frontend_modules:
   frontend_next:
+  document_objects:
+  neo4j_data:
+  meilisearch_data:

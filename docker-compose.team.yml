@@ -1,0 +1,109 @@
+# Lớp phủ triển khai cho nhóm nghiên cứu (nhiều người dùng, đăng nhập bắt buộc).
+#
+#   cp .env.team.example .env.team   # điền mật khẩu và địa chỉ công khai
+#   make team-up                     # build ảnh production và khởi động
+#   make team-owner EMAIL=... NAME=... # tạo chủ sở hữu đầu tiên
+#
+# Khác với chế độ cục bộ:
+# - Mã nguồn được đóng gói vào ảnh (không bind-mount, không reload, frontend standalone).
+# - Xác thực bắt buộc: DEPLOYMENT_ENVIRONMENT=production, cookie __Host- và Secure, nên người
+#   dùng phải truy cập qua HTTPS (hồ sơ `https` dùng Caddy, hoặc `tunnel` dùng Cloudflare Tunnel).
+# - API và PostgreSQL không mở cổng ra máy chủ; trình duyệt đi qua proxy của Next.js.
+# Xem `Docs/Team Deployment Runbook.md`.
+
+x-team-environment: &team-environment
+  DEPLOYMENT_ENVIRONMENT: production
+  AUTH_MODE: local
+  AUTH_COOKIE_NAME: __Host-research_session
+  AUTH_COOKIE_SECURE: "true"
+  API_RELOAD: "false"
+  API_CORS_ORIGINS: ${PUBLIC_URL:?Đặt PUBLIC_URL (ví dụ https://research.example.com) trong .env.team}
+  # Gói đăng nhập Claude Code/Codex/Antigravity của chủ máy là gói cá nhân; dùng chung cho cả
+  # nhóm là chia sẻ tài khoản. Chế độ nhóm luôn tắt cầu nối CLI và dùng API (DEC-062).
+  AI_CLI_BRIDGE_URL: ""
+  AI_CLI_BRIDGE_TOKEN: ""
+
+services:
+  database:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Đặt POSTGRES_PASSWORD trong .env.team}
+
+  api:
+    image: businessaiagents-team-api:latest
+    environment:
+      <<: *team-environment
+      API_WORKERS: ${API_WORKERS:-2}
+      # API không mở cổng ra ngoài nên chỉ proxy nội bộ gửi được X-Forwarded-For; tin cậy nó để
+      # giới hạn đăng nhập tính theo IP thật của từng thành viên.
+      FORWARDED_ALLOW_IPS: "*"
+      AUTH_LOGIN_ATTEMPTS_PER_WINDOW: ${AUTH_LOGIN_ATTEMPTS_PER_WINDOW:-10}
+      DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-4}
+      DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-2}
+    ports: !reset []
+    volumes: !override
+      - document_objects:/var/lib/research-system/objects
+
+  worker:
+    image: businessaiagents-team-api:latest
+    environment:
+      <<: *team-environment
+      DATABASE_POOL_SIZE: "2"
+      DATABASE_MAX_OVERFLOW: "1"
+    volumes: !override
+      - document_objects:/var/lib/research-system/objects
+    # Cho tác vụ AI đang chạy thời gian kết thúc trước khi bị dừng cưỡng bức.
+    stop_grace_period: 60s
+
+  frontend:
+    image: businessaiagents-team-frontend:latest
+    build:
+      context: ./apps/web
+      target: runner
+      args:
+        API_PROXY_TARGET: http://api:8000
+        API_PROXY_TIMEOUT_MS: ${API_PROXY_TIMEOUT_MS:-180000}
+    environment: !reset {}
+    command: !reset []
+    volumes: !reset []
+    depends_on:
+      api:
+        condition: service_healthy
+    # Mặc định chỉ nghe trên máy chủ; Caddy/Cloudflare Tunnel là lối vào cho thành viên.
+    ports: !override
+      - "${FRONTEND_BIND:-127.0.0.1}:${FRONTEND_PORT:-3000}:3000"
+
+  # HTTPS tự động: tên miền công khai dùng Let's Encrypt; địa chỉ LAN dùng CA nội bộ của Caddy.
+  caddy:
+    profiles: ["https"]
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    depends_on:
+      - frontend
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    command:
+      - caddy
+      - reverse-proxy
+      - --from
+      - ${SITE_ADDRESS:-localhost}
+      - --to
+      - frontend:3000
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+
+  # Cloudflare Tunnel: không mở cổng nào; cấu hình public hostname trỏ tới http://frontend:3000.
+  cloudflared:
+    profiles: ["tunnel"]
+    image: cloudflare/cloudflared:2026.5.2
+    restart: unless-stopped
+    depends_on:
+      - frontend
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+
+volumes:
+  caddy_data:
+  caddy_config:

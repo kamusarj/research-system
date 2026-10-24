@@ -10,6 +10,24 @@ from sqlalchemy.orm import Session
 from app.models import CollectorRun, CollectorSource, DiscoveredItem, Evaluation, ResearchItem
 from app.schemas.research import ResearchCreate
 from app.services.research import create_research, transition
+from app.services.sources.errors import SourceError
+from app.services.sources.http import fetch_public
+
+FEED_CONTENT_TYPES = {
+    "application/rss+xml",
+    "application/atom+xml",
+    "application/rdf+xml",
+    "application/xml",
+    "text/xml",
+    "text/plain",
+}
+
+
+def fetch_feed(url: str):
+    # Dùng chung bộ tải công khai của luồng tiếp nhận: chặn địa chỉ nội bộ/metadata, giới hạn
+    # chuyển hướng, dung lượng và thời gian, thay cho urllib không giới hạn của feedparser.
+    resource = fetch_public(url, FEED_CONTENT_TYPES)
+    return feedparser.parse(resource.content)
 
 
 def score_entry(title: str, content: str) -> tuple[float, dict[str, float]]:
@@ -47,9 +65,10 @@ def ingest(db: Session, discovered: DiscoveredItem) -> ResearchItem:
                 "collector_run_id": discovered.run_id,
             },
         ),
+        commit=False,
     )
-    transition(db, item, "submit-review")
-    transition(db, item, "approve")
+    transition(db, item, "submit-review", commit=False)
+    transition(db, item, "approve", commit=False)
     discovered.research_id = item.id
     discovered.status = "ingested"
     db.commit()
@@ -64,9 +83,9 @@ def run_rss(db: Session, source: CollectorSource) -> CollectorRun:
     db.commit()
     db.refresh(run)
     try:
-        feed = feedparser.parse(source.url)
+        feed = fetch_feed(source.url)
         if getattr(feed, "bozo", False) and not getattr(feed, "entries", []):
-            raise ValueError(str(getattr(feed, "bozo_exception", "Invalid RSS feed")))
+            raise SourceError("EXTRACTION_FAILED", "The feed could not be parsed")
         for entry in feed.entries:
             url = str(entry.get("link", "")).strip()
             external_id = str(
@@ -83,7 +102,7 @@ def run_rss(db: Session, source: CollectorSource) -> CollectorRun:
             if duplicate:
                 continue
             content = str(entry.get("summary") or entry.get("description") or "")
-            score, breakdown = score_entry(str(entry.get("title", "Untitled")), content)
+            score, breakdown = score_entry(str(entry.get("title", "Chưa có tiêu đề")), content)
             if score >= source.auto_approve_threshold:
                 decision = "auto-approved"
             elif score < source.auto_reject_threshold:
@@ -95,7 +114,7 @@ def run_rss(db: Session, source: CollectorSource) -> CollectorRun:
                 run_id=run.id,
                 external_id=external_id,
                 source_url=url,
-                title=str(entry.get("title", "Untitled")),
+                title=str(entry.get("title", "Chưa có tiêu đề")),
                 normalized_markdown=content,
                 authors=[
                     author.get("name") for author in entry.get("authors", []) if author.get("name")
@@ -125,8 +144,10 @@ def run_rss(db: Session, source: CollectorSource) -> CollectorRun:
                 run.ingested_count += 1
         run.status = "completed"
     except Exception as exc:
+        db.rollback()
         run.status = "failed"
-        run.error = str(exc)
+        # Chỉ lưu mã lỗi: câu lỗi gốc có thể lộ thông tin mạng nội bộ hoặc nội dung nguồn.
+        run.error = exc.code if isinstance(exc, SourceError) else "COLLECTOR_RUN_FAILED"
     run.finished_at = datetime.now(UTC)
     db.commit()
     db.refresh(run)

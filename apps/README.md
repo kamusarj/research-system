@@ -1,20 +1,20 @@
-# Applications
+# Các ứng dụng
 
-All deployable application code lives in this directory.
+Toàn bộ mã ứng dụng có thể triển khai nằm trong thư mục này.
 
-## Modules
+## Mô-đun
 
-- `api/`: FastAPI service. HTTP routers live in `app/api`, domain/application logic in `app/services`, request and response contracts in `app/schemas`, and persistence in `app/models.py` plus `migrations/`.
-- `web/`: Next.js App Router client. Routes live in `app`, reusable UI in `components`, and API contracts/client helpers in `lib`.
+- `api/`: dịch vụ FastAPI. Bộ định tuyến HTTP nằm trong `app/api`, logic nghiệp vụ/ứng dụng trong `app/services`, hợp đồng yêu cầu/phản hồi trong `app/schemas`, lớp lưu trữ trong `app/models.py` và `migrations/`.
+- `web/`: ứng dụng Next.js App Router. Các trang nằm trong `app`, thành phần giao diện tái sử dụng trong `components`, hợp đồng API và hàm hỗ trợ phía khách trong `lib`.
 
-## Dependency direction
+## Chiều phụ thuộc
 
 ```text
 web -> /api/v1 HTTP contract -> api -> PostgreSQL
 ```
 
-The web app does not import API internals. Search and graph remain rebuildable projections of the API's primary database. Shared runtime orchestration stays at the repository root so `docker compose` and `make` remain stable entrypoints.
+Ứng dụng web không nhập phần nội bộ của API. Tìm kiếm và đồ thị là các bản chiếu có thể dựng lại từ cơ sở dữ liệu chính của API. Cấu hình điều phối dùng chung vẫn ở thư mục gốc để `docker compose` và `make` là các điểm vào ổn định.
 
-## Naming convention
+## Quy ước đặt tên
 
-Use deployable-service names (`api`, `web`) for directories and Compose services. Add future deployables such as workers under `apps/`; add reusable, non-deployable code under a root `packages/` directory only when real cross-application reuse appears.
+Dùng tên dịch vụ triển khai được (`api`, `web`) cho thư mục và dịch vụ Compose. Đặt thành phần triển khai mới như worker trong `apps/`; chỉ tạo mã dùng chung không triển khai trong thư mục gốc `packages/` khi thực sự có nhu cầu tái sử dụng giữa các ứng dụng.

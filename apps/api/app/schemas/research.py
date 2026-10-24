@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 ResearchType = Literal["internal-research", "reference", "deep-research-report"]
 ResearchStatus = Literal["draft", "in-review", "approved", "archived", "rejected"]
-CollectionMethod = Literal["manual", "auto-collected", "ai-researched"]
+CollectionMethod = Literal["manual", "auto-collected", "ai-researched", "upload"]
 RelationType = Literal[
     "references",
     "extends",
@@ -78,7 +78,7 @@ class VersionRead(BaseModel):
 
 class CommentCreate(BaseModel):
     body: str = Field(min_length=1)
-    author: str = Field(default="Local researcher", min_length=1, max_length=120)
+    author: str = Field(default="Nhà nghiên cứu cục bộ", min_length=1, max_length=120)
 
 
 class CommentRead(CommentCreate):

@@ -17,4 +17,3 @@ class GapDismiss(BaseModel):
 
 class GapSnooze(BaseModel):
     until: datetime
-

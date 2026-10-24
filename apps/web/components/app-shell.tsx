@@ -2,23 +2,150 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import type { ReactNode } from "react";
+import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
 
-const links = [
-  ["/", "dashboard", "◫"], ["/ingestion", "intake", "↗"], ["/research", "research", "▤"],
-  ["/search", "search", "⌕"], ["/graph", "graph", "⌘"], ["/gaps", "gaps", "◇"],
-  ["/collector", "collector", "⇣"], ["/training", "training", "△"],
+type IconName = "dashboard" | "research" | "documents" | "sources" | "search" | "graph" | "changes" | "chat" | "gaps" | "collector" | "members";
+
+const navigation: { href: string; key: string; icon: IconName }[] = [
+  { href: "/", key: "dashboard", icon: "dashboard" },
+  { href: "/research", key: "research", icon: "research" },
+  { href: "/documents", key: "documentWorkspace", icon: "documents" },
+  { href: "/ingestion", key: "sources", icon: "sources" },
+  { href: "/search", key: "search", icon: "search" },
+  { href: "/graph", key: "graph", icon: "graph" },
+  { href: "/graph/changes", key: "graphChanges", icon: "changes" },
+  { href: "/chat", key: "brainstormChat", icon: "chat" },
+  { href: "/gaps", key: "gaps", icon: "gaps" },
+  { href: "/collector", key: "collector", icon: "collector" },
 ];
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+// Chỉ hiện với chủ sở hữu; máy chủ vẫn tự kiểm tra quyền.
+const adminNavigation: { href: string; key: string; icon: IconName }[] = [
+  { href: "/members", key: "members", icon: "members" },
+];
+
+const navigationGroups = [
+  { key: "navLibrary", items: navigation.slice(0, 5) },
+  { key: "navIntelligence", items: navigation.slice(5) },
+];
+
+function NavIcon({ name }: { name: IconName }) {
+  const common = { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+  if (name === "dashboard") return <svg {...common}><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></svg>;
+  if (name === "research") return <svg {...common}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z" /></svg>;
+  if (name === "documents") return <svg {...common}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6M8 13h8M8 17h6" /></svg>;
+  if (name === "sources") return <svg {...common}><path d="M12 5v14M5 12h14" /><circle cx="12" cy="12" r="10" /></svg>;
+  if (name === "search") return <svg {...common}><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>;
+  if (name === "graph") return <svg {...common}><circle cx="5" cy="6" r="2" /><circle cx="19" cy="6" r="2" /><circle cx="12" cy="18" r="2" /><path d="m7 7 4 9m6-9-4 9M7 6h10" /></svg>;
+  if (name === "changes") return <svg {...common}><path d="M4 6h16M4 12h10M4 18h7" /><path d="m17 15 3 3-3 3" /></svg>;
+  if (name === "chat") return <svg {...common}><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z" /><path d="M8 9h8M8 13h5" /></svg>;
+  if (name === "gaps") return <svg {...common}><path d="M12 2 2 7l10 5 10-5-10-5Z" /><path d="m2 17 10 5 10-5M2 12l10 5 10-5" /></svg>;
+  if (name === "members") return <svg {...common}><circle cx="9" cy="8" r="3" /><path d="M3 20a6 6 0 0 1 12 0" /><path d="M16 4a3 3 0 0 1 0 6M21 20a6 6 0 0 0-4-5.6" /></svg>;
+  if (name === "collector") return <svg {...common}><path d="M4 11a9 9 0 0 1 9 9" /><path d="M4 4a16 16 0 0 1 16 16" /><circle cx="5" cy="19" r="1" /></svg>;
+  return <svg {...common}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z" /><path d="M9 7h7M9 11h7" /></svg>;
+}
+
+export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { locale, setLocale, t } = useI18n();
-  return <div className="shell">
-    <aside className="sidebar">
-      <Link href="/" className="brand"><span className="brand-mark">R</span><span>RESEARCH<br /><small>INTELLIGENCE</small></span></Link>
-      <nav className="nav">{links.map(([href, key, icon]) => <Link className={pathname === href ? "active" : ""} key={href} href={href}><span>{icon}</span>{t(key)}</Link>)}</nav>
-      <div className="locale-switch"><span>{t("language")}</span><div><button className={locale === "en" ? "active" : ""} onClick={() => setLocale("en")}>EN</button><button className={locale === "vi" ? "active" : ""} onClick={() => setLocale("vi")}>VI</button></div></div>
-    </aside>
-    <main className="content">{children}</main>
-  </div>;
+  const { t } = useI18n();
+  const { enabled, user, can, logout } = useAuth();
+  const isActive = (href: string) => {
+    if (href === "/graph") return pathname === href;
+    return pathname === href || (href !== "/" && pathname.startsWith(href));
+  };
+  const pageClassName = [
+    "page",
+    pathname.startsWith("/documents") ? "document-page" : "",
+    pathname === "/chat" ? "ai-chat-page" : "",
+    pathname === "/graph" || pathname === "/graph/system" ? "graph-page" : "",
+  ].filter(Boolean).join(" ");
+  const groups = can("owner")
+    ? [...navigationGroups, { key: "navAdministration", items: adminNavigation }]
+    : navigationGroups;
+  const allNavigation = groups.flatMap((group) => group.items);
+  const activeNavigation = allNavigation.find((item) => isActive(item.href))
+    ?? (pathname.startsWith("/account") ? { href: "/account", key: "account", icon: "members" as IconName } : navigation[0]);
+
+  return (
+    <div className="app-layout">
+      <a className="skip-link" href="#main-content">{t("skipToContent")}</a>
+      <header className="topbar">
+        <Link href="/" className="topbar-brand" aria-label={t("researchSystemHome")}>
+          <span className="brand-logo" aria-hidden="true">✦</span>
+          <span className="brand-name">
+            Hệ thống nghiên cứu
+            <small>{t("workspaceLabel")}</small>
+          </span>
+        </Link>
+
+        <nav className="topnav" aria-label={t("workspace")}>
+          {groups.map((group) => (
+            <div className="topnav-group" key={group.key}>
+              <span className="topnav-group-label">{t(group.key)}</span>
+              {group.items.map((item) => (
+                <Link
+                  className={`topnav-link ${isActive(item.href) ? "current" : ""}`}
+                  key={item.href}
+                  href={item.href}
+                  aria-label={t(item.key)}
+                  title={t(item.key)}
+                >
+                  <span className="topnav-icon" aria-hidden="true"><NavIcon name={item.icon} /></span>
+                  <span>{t(item.key)}</span>
+                </Link>
+              ))}
+            </div>
+          ))}
+        </nav>
+
+        <div className="topbar-actions">
+          {can("researcher") && <Link href="/ingestion" className="topbar-cta"><span aria-hidden="true">+</span>{t("addSources")}</Link>}
+          {user && <div className="identity-menu" title={`${t("signedInAs")} ${user.email}`}>
+            <span className="workspace-avatar">{user.name.slice(0, 1).toUpperCase()}</span>
+            <Link className="identity-copy" href="/account" title={t("account")}><strong>{user.name}</strong><small>{t(`role${user.role[0].toUpperCase()}${user.role.slice(1)}`)}</small></Link>
+            {enabled && <button className="identity-logout" onClick={() => void logout()}>{t("signOut")}</button>}
+          </div>}
+        </div>
+      </header>
+
+      <nav className="mobile-nav" aria-label={t("workspace")}>
+        {allNavigation.map((item) => (
+          <Link className={isActive(item.href) ? "current" : ""} key={item.href} href={item.href}>
+            <NavIcon name={item.icon} />
+            <span>{t(item.key)}</span>
+          </Link>
+        ))}
+      </nav>
+
+      <div className="main">
+        <div className="workspace-bar">
+          <div className="workspace-location">
+            <span>{t("workspaceLabel")}</span>
+            <strong>{t(activeNavigation.key)}</strong>
+          </div>
+          <div className="workspace-tools">
+            <span className="workspace-status"><i aria-hidden="true" />{t("systemReady")}</span>
+            <Link className="workspace-search" href="/search"><NavIcon name="search" /><span>{t("searchWorkspace")}</span></Link>
+          </div>
+        </div>
+        <main className={pageClassName} id="main-content">{children}</main>
+      </div>
+
+      <footer className="site-footer">
+        <div className="site-footer-inner">
+          <Link href="/" className="site-footer-name" aria-label={t("researchSystemHome")}>
+            Hệ thống nghiên cứu
+          </Link>
+          <nav className="site-footer-links" aria-label={t("workspace")}>
+            <Link href="/research">{t("research")}</Link>
+            <Link href="/ingestion">{t("sources")}</Link>
+            <Link href="/graph">{t("graph")}</Link>
+          </nav>
+          <span className="site-footer-copyright">© {new Date().getFullYear()} Hệ thống nghiên cứu</span>
+        </div>
+      </footer>
+    </div>
+  );
 }

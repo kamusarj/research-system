@@ -1,0 +1,244 @@
+[
+  {
+    "id": "core-agent-architecture",
+    "category": "core",
+    "title": "Architectures for Reliable Business AI Agent Systems",
+    "dimensions": {"system_fit": 96, "business_applicability": 92, "evidence_quality": 86, "novelty": 82, "implementation_value": 94, "gap_coverage": 78, "freshness": 90},
+    "expected_decision": "priority_review",
+    "expected_pillar": "Agent System Architecture"
+  },
+  {
+    "id": "core-agent-evaluation",
+    "category": "core",
+    "title": "Evaluating Autonomous Agents in Enterprise Workflows",
+    "dimensions": {"system_fit": 94, "business_applicability": 90, "evidence_quality": 92, "novelty": 76, "implementation_value": 88, "gap_coverage": 84, "freshness": 85},
+    "expected_decision": "priority_review",
+    "expected_pillar": "Evaluation, Risk & Governance"
+  },
+  {
+    "id": "core-agent-memory",
+    "category": "core",
+    "title": "Memory and Knowledge for Long-Running Business Agents",
+    "dimensions": {"system_fit": 92, "business_applicability": 84, "evidence_quality": 82, "novelty": 85, "implementation_value": 88, "gap_coverage": 82, "freshness": 86},
+    "expected_decision": "priority_review",
+    "expected_pillar": "Data, Knowledge & Memory"
+  },
+  {
+    "id": "core-human-approval",
+    "category": "core",
+    "title": "Human Approval Controls for High-Stakes Agent Actions",
+    "dimensions": {"system_fit": 90, "business_applicability": 94, "evidence_quality": 88, "novelty": 70, "implementation_value": 86, "gap_coverage": 88, "freshness": 82},
+    "expected_decision": "priority_review",
+    "expected_pillar": "Evaluation, Risk & Governance"
+  },
+  {
+    "id": "enabling-vector-retrieval",
+    "category": "enabling",
+    "title": "Efficient Vector Retrieval for Agent Memory",
+    "dimensions": {"system_fit": 78, "business_applicability": 62, "evidence_quality": 86, "novelty": 68, "implementation_value": 82, "gap_coverage": 58, "freshness": 80},
+    "expected_decision": "draft_graph",
+    "expected_pillar": "Data, Knowledge & Memory"
+  },
+  {
+    "id": "enabling-tool-calling",
+    "category": "enabling",
+    "title": "Structured Tool Calling for Language Models",
+    "dimensions": {"system_fit": 82, "business_applicability": 66, "evidence_quality": 80, "novelty": 72, "implementation_value": 86, "gap_coverage": 50, "freshness": 88},
+    "expected_decision": "draft_graph",
+    "expected_pillar": "Tools, Functions & Integrations"
+  },
+  {
+    "id": "enabling-observability",
+    "category": "enabling",
+    "title": "Distributed Tracing for LLM Applications",
+    "dimensions": {"system_fit": 72, "business_applicability": 60, "evidence_quality": 78, "novelty": 62, "implementation_value": 84, "gap_coverage": 54, "freshness": 86},
+    "expected_decision": "draft_graph",
+    "expected_pillar": "Engineering & Operations"
+  },
+  {
+    "id": "enabling-process-mining",
+    "category": "enabling",
+    "title": "Process Mining for Discovering Automation Opportunities",
+    "dimensions": {"system_fit": 68, "business_applicability": 88, "evidence_quality": 84, "novelty": 58, "implementation_value": 76, "gap_coverage": 60, "freshness": 70},
+    "expected_decision": "draft_graph",
+    "expected_pillar": "Business Methods & Decision Intelligence"
+  },
+  {
+    "id": "watch-strong-method-low-business",
+    "category": "tangential",
+    "title": "A Rigorous Benchmark for Generic Text Embeddings",
+    "dimensions": {"system_fit": 42, "business_applicability": 28, "evidence_quality": 94, "novelty": 74, "implementation_value": 52, "gap_coverage": 30, "freshness": 78},
+    "expected_decision": "watch",
+    "expected_pillar": "Research & Evidence"
+  },
+  {
+    "id": "watch-business-weak-evidence",
+    "category": "tangential",
+    "title": "Opinion Survey on AI Assistants in Sales",
+    "dimensions": {"system_fit": 62, "business_applicability": 84, "evidence_quality": 24, "novelty": 40, "implementation_value": 44, "gap_coverage": 48, "freshness": 70},
+    "expected_decision": "watch",
+    "expected_pillar": "Business Context"
+  },
+  {
+    "id": "irrelevant-image-compression",
+    "category": "irrelevant",
+    "title": "Lossless Compression for Satellite Imagery",
+    "dimensions": {"system_fit": 8, "business_applicability": 12, "evidence_quality": 88, "novelty": 70, "implementation_value": 20, "gap_coverage": 4, "freshness": 72},
+    "expected_decision": "not_relevant",
+    "expected_pillar": null
+  },
+  {
+    "id": "irrelevant-material-science",
+    "category": "irrelevant",
+    "title": "Thermal Properties of Composite Materials",
+    "dimensions": {"system_fit": 2, "business_applicability": 8, "evidence_quality": 92, "novelty": 64, "implementation_value": 12, "gap_coverage": 2, "freshness": 60},
+    "expected_decision": "not_relevant",
+    "expected_pillar": null
+  },
+  {
+    "id": "core-multi-agent-coordination",
+    "category": "core",
+    "title": "Coordination Protocols for Multi-Agent Business Operations",
+    "dimensions": {"system_fit": 94, "business_applicability": 90, "evidence_quality": 84, "novelty": 82, "implementation_value": 92, "gap_coverage": 80, "freshness": 88},
+    "expected_decision": "priority_review",
+    "expected_pillar": "Agent Capabilities & Workflows"
+  },
+  {
+    "id": "core-agent-risk-controls",
+    "category": "core",
+    "title": "Risk Controls and Auditability for Enterprise AI Agents",
+    "dimensions": {"system_fit": 92, "business_applicability": 94, "evidence_quality": 90, "novelty": 76, "implementation_value": 84, "gap_coverage": 90, "freshness": 86},
+    "expected_decision": "priority_review",
+    "expected_pillar": "Evaluation, Risk & Governance"
+  },
+  {
+    "id": "core-agent-feedback",
+    "category": "core",
+    "title": "Closed-Loop Feedback for Outcome-Driven Business Agents",
+    "dimensions": {"system_fit": 91, "business_applicability": 93, "evidence_quality": 83, "novelty": 80, "implementation_value": 89, "gap_coverage": 84, "freshness": 85},
+    "expected_decision": "priority_review",
+    "expected_pillar": "Outputs, Actions & Feedback"
+  },
+  {
+    "id": "core-agent-economics",
+    "category": "core",
+    "title": "Measuring Cost and Business Value of Agentic Automation",
+    "dimensions": {"system_fit": 89, "business_applicability": 97, "evidence_quality": 86, "novelty": 74, "implementation_value": 88, "gap_coverage": 82, "freshness": 84},
+    "expected_decision": "priority_review",
+    "expected_pillar": "Business Problems & Outcomes"
+  },
+  {
+    "id": "core-agent-context",
+    "category": "core",
+    "title": "Organizational Context for Deploying AI Agent Systems",
+    "dimensions": {"system_fit": 88, "business_applicability": 95, "evidence_quality": 82, "novelty": 72, "implementation_value": 80, "gap_coverage": 86, "freshness": 82},
+    "expected_decision": "priority_review",
+    "expected_pillar": "Business Context"
+  },
+  {
+    "id": "core-agent-integration",
+    "category": "core",
+    "title": "Governed Integration Patterns for Enterprise Agent Tools",
+    "dimensions": {"system_fit": 93, "business_applicability": 89, "evidence_quality": 85, "novelty": 78, "implementation_value": 94, "gap_coverage": 76, "freshness": 87},
+    "expected_decision": "priority_review",
+    "expected_pillar": "Tools, Functions & Integrations"
+  },
+  {
+    "id": "enabling-rag-evaluation",
+    "category": "enabling",
+    "title": "Evaluation Methods for Retrieval-Augmented Generation",
+    "dimensions": {"system_fit": 76, "business_applicability": 58, "evidence_quality": 88, "novelty": 66, "implementation_value": 80, "gap_coverage": 62, "freshness": 84},
+    "expected_decision": "draft_graph",
+    "expected_pillar": "Research & Evidence"
+  },
+  {
+    "id": "enabling-workflow-engines",
+    "category": "enabling",
+    "title": "Durable Workflow Engines for Long-Running AI Tasks",
+    "dimensions": {"system_fit": 79, "business_applicability": 70, "evidence_quality": 82, "novelty": 64, "implementation_value": 88, "gap_coverage": 56, "freshness": 82},
+    "expected_decision": "draft_graph",
+    "expected_pillar": "Engineering & Operations"
+  },
+  {
+    "id": "enabling-policy-engines",
+    "category": "enabling",
+    "title": "Policy Engines for Automated Decision Systems",
+    "dimensions": {"system_fit": 74, "business_applicability": 72, "evidence_quality": 84, "novelty": 62, "implementation_value": 78, "gap_coverage": 64, "freshness": 76},
+    "expected_decision": "draft_graph",
+    "expected_pillar": "Evaluation, Risk & Governance"
+  },
+  {
+    "id": "enabling-event-streams",
+    "category": "enabling",
+    "title": "Event Streaming for Reactive Automation Systems",
+    "dimensions": {"system_fit": 66, "business_applicability": 64, "evidence_quality": 82, "novelty": 58, "implementation_value": 84, "gap_coverage": 48, "freshness": 78},
+    "expected_decision": "draft_graph",
+    "expected_pillar": "Engineering & Operations"
+  },
+  {
+    "id": "enabling-knowledge-graphs",
+    "category": "enabling",
+    "title": "Knowledge Graph Construction from Technical Documents",
+    "dimensions": {"system_fit": 80, "business_applicability": 60, "evidence_quality": 86, "novelty": 70, "implementation_value": 82, "gap_coverage": 68, "freshness": 80},
+    "expected_decision": "draft_graph",
+    "expected_pillar": "Data, Knowledge & Memory",
+    "duplicate_group": "knowledge-graph-technical-documents"
+  },
+  {
+    "id": "enabling-knowledge-graphs-near-duplicate",
+    "category": "enabling",
+    "title": "Building Knowledge Graphs from Technical Documentation",
+    "dimensions": {"system_fit": 78, "business_applicability": 58, "evidence_quality": 84, "novelty": 42, "implementation_value": 80, "gap_coverage": 64, "freshness": 79},
+    "expected_decision": "draft_graph",
+    "expected_pillar": "Data, Knowledge & Memory",
+    "duplicate_group": "knowledge-graph-technical-documents"
+  },
+  {
+    "id": "watch-foundational-planning",
+    "category": "tangential",
+    "title": "Classical Planning Algorithms: A Foundational Survey",
+    "dimensions": {"system_fit": 54, "business_applicability": 30, "evidence_quality": 92, "novelty": 24, "implementation_value": 48, "gap_coverage": 38, "freshness": 20},
+    "expected_decision": "watch",
+    "expected_pillar": "Research & Evidence"
+  },
+  {
+    "id": "watch-chatbot-adoption",
+    "category": "tangential",
+    "title": "Consumer Chatbot Adoption Across Retail Markets",
+    "dimensions": {"system_fit": 48, "business_applicability": 76, "evidence_quality": 58, "novelty": 46, "implementation_value": 34, "gap_coverage": 42, "freshness": 74},
+    "expected_decision": "watch",
+    "expected_pillar": "Business Context"
+  },
+  {
+    "id": "watch-generic-llm-scaling",
+    "category": "tangential",
+    "title": "Scaling Laws for General-Purpose Language Models",
+    "dimensions": {"system_fit": 44, "business_applicability": 26, "evidence_quality": 90, "novelty": 68, "implementation_value": 40, "gap_coverage": 28, "freshness": 68},
+    "expected_decision": "watch",
+    "expected_pillar": "Research & Evidence"
+  },
+  {
+    "id": "irrelevant-marine-biology",
+    "category": "irrelevant",
+    "title": "Migration Patterns of Deep-Sea Fish",
+    "dimensions": {"system_fit": 1, "business_applicability": 4, "evidence_quality": 90, "novelty": 62, "implementation_value": 4, "gap_coverage": 1, "freshness": 66},
+    "expected_decision": "not_relevant",
+    "expected_pillar": null
+  },
+  {
+    "id": "irrelevant-quantum-materials",
+    "category": "irrelevant",
+    "title": "Quantum Phase Transitions in Novel Materials",
+    "dimensions": {"system_fit": 3, "business_applicability": 6, "evidence_quality": 94, "novelty": 82, "implementation_value": 6, "gap_coverage": 1, "freshness": 80},
+    "expected_decision": "not_relevant",
+    "expected_pillar": null
+  },
+  {
+    "id": "irrelevant-crop-genetics",
+    "category": "irrelevant",
+    "title": "Genetic Markers for Drought-Resistant Crops",
+    "dimensions": {"system_fit": 2, "business_applicability": 10, "evidence_quality": 88, "novelty": 76, "implementation_value": 8, "gap_coverage": 2, "freshness": 78},
+    "expected_decision": "not_relevant",
+    "expected_pillar": null
+  }
+]

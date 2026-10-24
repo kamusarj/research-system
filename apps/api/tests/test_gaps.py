@@ -47,3 +47,20 @@ def test_dismissed_gap_is_not_reopened_by_detection(client):
     assert dismissed.json()["status"] == "dismissed"
     detected_again = client.post("/api/v1/gaps/detect").json()
     assert next(item for item in detected_again if item["id"] == gap["id"])["status"] == "dismissed"
+
+
+def test_snoozed_gap_returns_once_its_snooze_has_passed():
+    from datetime import UTC, datetime, timedelta
+
+    from app.models import KnowledgeGap
+    from app.services.gaps import _snooze_expired
+
+    past = KnowledgeGap(status="snoozed", snoozed_until=datetime.now(UTC) - timedelta(hours=1))
+    naive_past = KnowledgeGap(
+        status="snoozed", snoozed_until=datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=1)
+    )
+    future = KnowledgeGap(status="snoozed", snoozed_until=datetime.now(UTC) + timedelta(days=1))
+
+    assert _snooze_expired(past) is True
+    assert _snooze_expired(naive_past) is True
+    assert _snooze_expired(future) is False

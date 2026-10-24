@@ -1,0 +1,21 @@
+# Cài bằng `scripts/install_ai_cli_bridge.sh` (thay @REPO_DIR@ bằng đường dẫn repo thật).
+[Unit]
+Description=Business AI Agents AI CLI bridge (Claude Code/Codex/Antigravity subscription quota)
+After=graphical-session.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# Chỉ nghe trên cổng Docker nội bộ: container gọi được, mạng LAN và tunnel thì không.
+Environment=AI_CLI_BRIDGE_BIND=172.17.0.1
+Environment=AI_CLI_BRIDGE_PORT=11436
+Environment=AI_CLI_BRIDGE_MAX_CONCURRENCY=2
+Environment=AI_CLI_BRIDGE_QUEUE_SECONDS=120
+ExecStart=/usr/bin/python3 -I "@REPO_DIR@/apps/api/app/ai_cli_bridge.py" serve
+# docker0 có thể chưa lên khi đăng nhập; thử lại cho tới khi gắn được địa chỉ.
+Restart=always
+RestartSec=10
+NoNewPrivileges=no
+
+[Install]
+WantedBy=default.target

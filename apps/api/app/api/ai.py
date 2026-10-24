@@ -12,8 +12,14 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 
 
 @router.get("/providers")
-def providers() -> list[dict]:
-    return provider_status()
+def providers(preflight: bool = False) -> list[dict]:
+    """List providers, optionally contacting each configured one to prove it answers.
+
+    The preflight is off by default because it costs a network round trip per provider.
+    Neither the credential nor the provider's response is returned or logged.
+    """
+
+    return provider_status(preflight=preflight)
 
 
 def output_dict(output: AIOutput) -> dict:

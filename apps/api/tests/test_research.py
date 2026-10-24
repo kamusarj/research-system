@@ -73,7 +73,7 @@ def test_relations_comments_and_filters(client):
 def test_structured_error_format(client):
     response = client.get("/api/v1/research/not-found")
     assert response.status_code == 404
-    assert response.json()["error"]["code"] == "request_error"
+    assert response.json()["error"]["code"] == "SOURCE_NOT_FOUND"
 
 
 def test_reviewer_can_reject_and_resubmit_research(client):

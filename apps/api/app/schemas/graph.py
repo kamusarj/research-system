@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -18,6 +19,16 @@ class GraphNode(BaseModel):
     degree: int = Field(default=0, ge=0)
     status: str | None = None
     priority: int | None = None
+    primary_parent_id: str | None = None
+    child_count: int = Field(default=0, ge=0)
+    workspace_id: str | None = None
+    lifecycle_status: str = "approved"
+    aliases: list[str] = Field(default_factory=list)
+    provenance: dict[str, object] = Field(default_factory=dict)
+    evidence_count: int = Field(default=0, ge=0)
+    # Set when a relationship-view node is the same thing as an approved ontology node, so
+    # the two views agree on identity instead of showing one concept as two nodes.
+    canonical_node_id: str | None = None
 
 
 class GraphEdge(BaseModel):
@@ -36,6 +47,13 @@ class GraphMeta(BaseModel):
     query: str | None = None
     truncated: bool = False
     provider: str = "postgres"
+    view: Literal["relationship", "hierarchy"] = "relationship"
+    # How many nodes and edges matched before the response limit was applied. "Truncated"
+    # alone tells a reader that something was hidden but not how much, which is the
+    # difference between a graph they can trust and one they cannot.
+    total_node_count: int = Field(default=0, ge=0)
+    total_edge_count: int = Field(default=0, ge=0)
+    node_limit: int = Field(default=0, ge=0)
 
 
 class GraphResponse(BaseModel):
@@ -72,3 +90,4 @@ class GraphQuery(BaseModel):
     limit: int = Field(ge=1)
     depth: int = Field(default=1, ge=1)
     root_node_id: str | None = None
+    view: Literal["relationship", "hierarchy"] = "relationship"

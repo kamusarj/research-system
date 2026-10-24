@@ -92,7 +92,7 @@ def record_event(db: Session, item: ResearchItem, event_type: str) -> None:
     )
 
 
-def create_research(db: Session, data: ResearchCreate) -> ResearchItem:
+def create_research(db: Session, data: ResearchCreate, *, commit: bool = True) -> ResearchItem:
     values = data.model_dump(exclude={"tags", "metadata"}, mode="json")
     values["source_url"] = str(data.source_url) if data.source_url else None
     item = ResearchItem(**values, metadata_json=data.metadata)
@@ -101,6 +101,9 @@ def create_research(db: Session, data: ResearchCreate) -> ResearchItem:
     item.display_id = f"RES-{datetime.now(UTC).year}-{item.id[:8].upper()}"
     sync_tags(db, item, data.tags)
     record_event(db, item, "research.created")
+    if not commit:
+        db.flush()
+        return item
     db.commit()
     db.refresh(item)
     return get_research_or_404(db, item.id)
@@ -133,7 +136,9 @@ def update_research(db: Session, item: ResearchItem, data: ResearchUpdate) -> Re
     return get_research_or_404(db, item.id)
 
 
-def transition(db: Session, item: ResearchItem, action: str) -> ResearchItem:
+def transition(
+    db: Session, item: ResearchItem, action: str, *, commit: bool = True
+) -> ResearchItem:
     transitions = {
         "submit-review": ({"draft", "rejected"}, "in-review"),
         "approve": ({"in-review"}, "approved"),
@@ -147,6 +152,9 @@ def transition(db: Session, item: ResearchItem, action: str) -> ResearchItem:
     if target == "approved":
         item.approved_at = datetime.now(UTC)
     record_event(db, item, f"research.{target}")
+    if not commit:
+        db.flush()
+        return item
     db.commit()
     return get_research_or_404(db, item.id)
 

@@ -31,9 +31,7 @@ def gaps(status: str | None = None, db: Session = Depends(get_db)) -> list[dict]
 
 
 @router.post("/detect")
-def detect(
-    max_coverage: int = Query(1, ge=1, le=20), db: Session = Depends(get_db)
-) -> list[dict]:
+def detect(max_coverage: int = Query(1, ge=1, le=20), db: Session = Depends(get_db)) -> list[dict]:
     return [serialize_gap(gap) for gap in detect_gaps(db, max_coverage)]
 
 

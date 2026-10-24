@@ -144,6 +144,24 @@ Research Item là entity trung tâm của hệ thống.
 | `SYNTHESIZED_INTO` | ResearchItem -> ResearchItem | Được tổng hợp vào deep research report. |
 | `FILLS_GAP` | ResearchItem -> ResearchGap | Item giúp lấp gap. |
 
+The published research relationship and hierarchy views are projections of the same approved node
+corpus. Hierarchy selects one deterministic display parent from approved membership edges; it is not
+a separately maintained ontology. `SystemRoot` and `SystemPillar` belong to the canonical Business
+AI Agents system map and are served separately by `/api/v1/graph/system`.
+
+### 4.4. Intake Occurrence and Processing Aggregates
+
+Intake provenance is separate from processing state. `IntakeReceipt` represents one manual/API/
+external occurrence; `IntakeReceiptItem` represents each URL or document inside it. URL items link
+to the unique normalized-URL `LinkSubmission`; document items link to a `DocumentGraphWorkspace`
+only after bytes have been validated and durably stored. A different occurrence of an existing URL
+creates a new receipt item but reuses the processing aggregate. An identical occurrence/item replay
+creates neither a new item nor a new job.
+
+The full key, API, privacy, concurrency, migration and proof contract is defined in
+`Docs/Intake Occurrence and Receipt Specification.md`. The model is additive and source-neutral;
+Discord remains only a future adapter.
+
 ---
 
 ## 5. Main System Components
@@ -203,6 +221,12 @@ Workers xử lý mọi tác vụ chậm hoặc dễ retry.
 | Gap Detection Worker | Scheduled or graph changed | ResearchGap nodes and suggestions. |
 | Digest Worker | Weekly schedule | Team digest and collector summary. |
 
+Trạng thái local-first hiện tại: approval của một link là một graph-change signal và refresh
+low-coverage gaps đồng bộ trong API transaction chứa ontology proposal. Receipt projection chỉ
+đính kèm active gaps có concept key trùng với tag của approved research item liên quan; external
+gateway không được gọi gap mutation trực tiếp. Discord dùng projection này để gửi channel alert,
+trong khi scheduled/outbox worker vẫn là hướng nâng cấp khi cần scale hoặc delivery retry lâu dài.
+
 ---
 
 ## 6. Data Stores
@@ -230,6 +254,10 @@ Core tables:
 - `research_gaps`
 - `audit_events`
 - `embedding_chunks`
+- `search_vector_projections`
+- `intake_receipts`
+- `intake_receipt_items`
+- `service_accounts`
 
 `pgvector` dùng cho:
 
@@ -237,6 +265,12 @@ Core tables:
 - Duplicate detection.
 - Similar research recommendation.
 - Candidate selection trước khi LLM suggest relation.
+
+Trạng thái triển khai hiện tại: `search_vector_projections` tách riêng khỏi legacy
+`embedding_chunks`, lưu các chunk approved-only dưới dạng `vector(1024)` từ model Mistral thật và
+có HNSW cosine index. Rebuild lấy embeddings trước khi thay projection trong một transaction;
+semantic query trả ranked research IDs rồi hydrate lại từ PostgreSQL canonical. Provider được chọn
+rõ bằng `VECTOR_DATA_PROVIDER`, lỗi không fallback ngầm.
 
 ### 6.2. Neo4j
 
@@ -250,6 +284,14 @@ Neo4j là graph projection phục vụ:
 
 Neo4j được sync từ PostgreSQL. Nếu Neo4j mất dữ liệu, có thể rebuild từ PostgreSQL.
 
+Trạng thái triển khai hiện tại: adapter tùy chọn lưu hai view `relationship` và `hierarchy` bằng
+identity kép `(projection, graph_id)`. Owner chủ động gọi rebuild; một managed transaction upsert
+toàn bộ snapshot đã validate rồi xóa riêng các row projection cũ. Query, hierarchy branch, shortest
+path và cluster đều đi qua provider đã chọn với limit/hop bound; lỗi cấu hình/kết nối trả lỗi typed,
+không fallback ngầm về PostgreSQL. Hai projection dùng cùng approved research node corpus; system
+ontology không được ghi vào hai projection này và vẫn đọc riêng từ PostgreSQL. Đồng bộ tự
+động/outbox và vận hành HA vẫn là follow-up.
+
 ### 6.3. Meilisearch
 
 Meilisearch phục vụ UX search nhanh:
@@ -257,6 +299,12 @@ Meilisearch phục vụ UX search nhanh:
 - Typo-tolerant full-text search.
 - Facets theo `type`, `status`, `collection_method`, `source`, `tags`, `date`.
 - Autocomplete title, tag, technology.
+
+Trạng thái triển khai hiện tại: adapter tùy chọn tạo staging index sạch, áp settings và document
+theo batch, đợi từng async task, kiểm tra parity rồi atomic swap với live index. Rebuild lặp lại xóa
+stale documents; search/suggest chỉ trả projection fields tối thiểu và API hydrate bản ghi approved
+hiện tại từ PostgreSQL. Service Compose nằm trong profile `search`, không publish host port và dữ
+liệu index có thể xóa/rebuild từ canonical source.
 
 ### 6.4. Redis
 
@@ -516,6 +564,7 @@ POST   /api/v1/qa
 
 ```text
 GET    /api/v1/graph
+GET    /api/v1/graph/system
 GET    /api/v1/graph/node/{id}
 GET    /api/v1/graph/ego/{id}
 GET    /api/v1/graph/path?from=&to=
@@ -552,6 +601,22 @@ POST   /api/v1/gaps/{id}/assign
 POST   /api/v1/gaps/{id}/request-deep-research
 POST   /api/v1/deep-research/{id}/approve
 ```
+
+### 10.6. Source-Neutral Intake Receipts
+
+Implemented source-neutral contract:
+
+```text
+POST   /api/v1/intake/receipts
+POST   /api/v1/intake/receipts/{id}/documents
+GET    /api/v1/intake/receipts/{id}
+```
+
+The compatibility `/api/v1/ingestion/links` endpoint creates an implicit single-item receipt.
+External adapters supply a stable source namespace and occurrence reference; the server owns
+normalization, hashing, idempotency, processing links and safe status projection. Owner-managed,
+revocable service accounts store only token hashes and may be limited to `intake:submit` and
+`intake:read-own` within one namespace.
 
 ---
 
@@ -658,6 +723,9 @@ Required indexes:
 - `evaluations(decision, overall_score)`
 - `research_relations(source_id, relation_type)`
 - `embedding_chunks USING ivfflat (embedding vector_cosine_ops)`
+- `intake_receipts(delivery_key_hash)` unique
+- `intake_receipt_items(receipt_id, item_key_hash)` unique
+- `intake_receipt_items(receipt_id, kind, external_item_ref)` partial unique for document conflicts
 
 ---
 
@@ -780,7 +848,50 @@ Core containers:
 |---|---|
 | Local dev | Small sample data, hot reload, optional mocked LLM. |
 | Staging | Full pipeline test with selected sources. |
-| Production | Scheduled collectors, backups, monitoring, stable model versions. |
+| Production | Scheduled collectors, backups, monitoring, stable model versions, mandatory auth and secure cookies. |
+
+### 15.2.1. Team Authentication Boundary
+
+The first shared deployment uses local accounts with Argon2 password hashes and random opaque
+sessions. Only session-token hashes are stored. The browser receives an HttpOnly, Secure, SameSite
+session cookie and a separate CSRF cookie whose value must match the request header on mutations.
+The API enforces a `viewer < researcher < owner` hierarchy; owners hold publish, approval, user
+administration and other canonical-state privileges. Audit records use the authenticated actor ID.
+
+`AUTH_MODE=disabled` is restricted to trusted local use. Staging and production fail configuration
+validation unless local auth, secure cookies and a `__Host-` session-cookie name are present. TLS,
+an external identity provider, MFA and multi-tenant isolation remain deployment/evolution work.
+Supported sensitive settings prefer file-mounted values under `/run/secrets` so Compose/Kubernetes
+secret mounts can replace plain environment injection without changing application code.
+
+Riêng `/chat` hỗ trợ API cá nhân tạm thời: researcher/owner nhập khóa OpenAI/DeepSeek của
+chính họ vào trang, khóa đi qua API cùng origin tới endpoint HTTPS cố định của nhà cung cấp.
+Khóa cấu hình máy chủ không bao giờ được trả về browser. Khóa cá nhân không lưu vào
+browser storage/database/log; chỉ giữ trong bộ nhớ trang và request server. Đổi tài khoản
+hoặc rời trang hủy bộ nhớ khóa. Session chỉ lưu `credential_source` và model/provider;
+phiên personal thiếu khóa bị từ chối trước khi ghi lượt chat, không fallback về system.
+Quyền đọc lịch sử chung của nhóm, CSRF, rate limit và duyệt đồ thị giữ nguyên.
+
+### 15.2.2. Bounded Source Enrichment Boundary
+
+Direct public HTTP and PDF text-layer extraction remain the primary paths. Optional Browserless
+rendering is isolated behind a Compose profile and runs only after an article reports
+`JS_RENDER_REQUIRED`. The application validates the top-level URL and every browser subrequest with
+the public-target/SSRF policy, blocks image/media/font resources, disables service workers and
+downloads, and enforces time/wait/HTML-size limits. The Browserless image is pinned by digest and has
+no published host port; production still requires network egress policy because application DNS
+validation cannot replace infrastructure isolation.
+
+Optional scanned-PDF OCR uses PDFium for bounded in-memory page rendering and the Tesseract CLI over
+stdin/stdout. Page count, DPI, pixels, total duration, languages and output characters are bounded.
+URL intake and uploaded document workspaces share the OCR service and persist engine/page/language
+provenance. Provider absence or failure preserves a typed partial/hard-gate result.
+
+Facebook Reel/video media is never downloaded or accessed through login. A researcher may attach a
+validated, timestamped transcript they already possess to an unpublished public submission. The
+override is reparsed from the database boundary, requeues all derived work, and remains subject to
+owner publication review. Queue responses and audit events expose only transcript summary metadata,
+not the body.
 
 ### 15.3. Backup Strategy
 
@@ -800,14 +911,15 @@ Core containers:
 - Implement PostgreSQL schema and migrations.
 - Build Research CRUD API.
 - Build basic Next.js dashboard, research list, detail, editor.
-- Add auth and roles.
+- Operate and harden the implemented local auth and role boundary; migrate to OIDC when required.
 - Add MinIO attachments.
 
 ### Phase 2 - Search and Graph
 
 - Add Meilisearch indexing.
 - Add pgvector embeddings and semantic search.
-- Add Neo4j projection sync.
+- Operate the implemented explicit Neo4j projection rebuild; add durable outbox-driven sync only
+  when freshness requirements justify it.
 - Build graph viewer with filters, node detail, ego graph.
 - Add manual relation management.
 

@@ -3,8 +3,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-SourceType = Literal["github", "article", "facebook_reel", "pdf"]
-CollectionStatus = Literal["EXTRACTED", "NEEDS_TRANSCRIPT", "NEEDS_TEXT_LAYER"]
+SourceType = Literal["github", "article", "facebook", "paper", "pdf"]
+CollectionStatus = Literal["EXTRACTED", "PARTIAL"]
+MediaType = Literal["image", "video", "pdf"]
 
 
 class SourceEntity(BaseModel):
@@ -37,6 +38,11 @@ class SourceEvidence(BaseModel):
     location: str | None = None
 
 
+class SourceMedia(BaseModel):
+    type: MediaType
+    url: str
+
+
 class NormalizedSource(BaseModel):
     id: str
     source_type: SourceType
@@ -44,12 +50,19 @@ class NormalizedSource(BaseModel):
     title: str
     authors: list[str] = Field(default_factory=list)
     published_at: datetime | None = None
+    description: str = ""
     raw_text: str = ""
     summary: str = ""
     language: str = "other"
+    media: list[SourceMedia] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
     entities: list[SourceEntity] = Field(default_factory=list)
     claims: list[SourceClaim] = Field(default_factory=list)
     relationships: list[SourceRelationship] = Field(default_factory=list)
     evidence: list[SourceEvidence] = Field(default_factory=list)
     collection_status: CollectionStatus = "EXTRACTED"
+    limitation_code: str | None = None
+    limitation_message: str | None = None
+
+
+ResearchDocument = NormalizedSource

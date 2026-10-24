@@ -1,9 +1,10 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.identity import current_principal, has_role
 from app.db import get_db
 from app.models import Attachment, Comment, ResearchItem, ResearchRelation, ResearchVersion, Tag
 from app.schemas.research import (
@@ -89,7 +90,17 @@ def get(research_id: str, db: Session = Depends(get_db)) -> ResearchRead:
 
 @router.put("/{research_id}", response_model=ResearchRead)
 def update(research_id: str, data: ResearchUpdate, db: Session = Depends(get_db)) -> ResearchRead:
-    return serialize_research(update_research(db, get_research_or_404(db, research_id), data))
+    item = get_research_or_404(db, research_id)
+    principal = current_principal()
+    # Nội dung đang chờ duyệt hoặc đã xuất bản là thứ chủ sở hữu đã/đang kiểm duyệt; nhà nghiên
+    # cứu sửa nó sẽ vượt qua bước duyệt, nên chỉ chủ sở hữu được sửa ở các trạng thái này.
+    if (
+        item.status in {"in-review", "approved"}
+        and principal is not None
+        and not has_role(principal.role, "owner")
+    ):
+        raise HTTPException(403, "Only the owner can edit research under review or approved")
+    return serialize_research(update_research(db, item, data))
 
 
 @router.delete("/{research_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -138,7 +149,11 @@ def comments(research_id: str, db: Session = Depends(get_db)) -> list[Comment]:
 
 @router.post("/{research_id}/comments", response_model=CommentRead, status_code=201)
 def comment(research_id: str, data: CommentCreate, db: Session = Depends(get_db)) -> Comment:
-    return add_comment(db, get_research_or_404(db, research_id), data.body, data.author)
+    principal = current_principal()
+    # Tác giả lấy từ phiên đăng nhập; chỉ chế độ cục bộ không xác thực mới dùng giá trị gửi lên.
+    signed_in = principal is not None and principal.id != "local-user"
+    author = principal.name if signed_in else data.author
+    return add_comment(db, get_research_or_404(db, research_id), data.body, author)
 
 
 @router.get("/{research_id}/relations", response_model=list[RelationRead])

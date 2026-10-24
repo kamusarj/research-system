@@ -52,7 +52,7 @@ Use `AI_LOGS/TEMPLATES/session-template.md` if unsure.
 The current accepted direction is:
 
 - Local-first Research System MVP.
-- Prioritize Research Knowledge Base before full collector/training automation.
+- Prioritize the Research Knowledge Base and bounded collector workflows.
 - Start with docs/spec and only implement code when explicitly requested.
 - Keep architecture upgradeable toward FastAPI, Next.js, PostgreSQL + pgvector, Neo4j, Meilisearch, Redis, MinIO, and Ollama.
 - Use Markdown AI handoff logs before adding database/API-backed agent logs.
@@ -68,8 +68,7 @@ When implementation is requested, follow this order unless the user changes prio
 5. Graph projection.
 6. AI enrichment.
 7. RSS collector MVP.
-8. Training Data Hub foundation.
-9. Tests and docs polish.
+8. Tests and docs polish.
 
 ## Verification Expectations
 
@@ -84,3 +83,22 @@ For code changes:
 - Record commands and results in the session log.
 - If tests cannot run, record why in both final response and `AI_LOGS/HANDOFF.md`.
 
+
+<!-- HARNESS:BEGIN -->
+## Harness
+
+Choose the request class before any Harness operation.
+
+- When the requested outcome is only an answer, explanation, review, diagnosis,
+  plan, or status report: inspect only the material needed to respond. Keep the
+  task read-only. Do not bootstrap, initialize or migrate a database, record
+  intake, or record a trace.
+- When the user explicitly asks to change, build, fix, or write repository
+  artifacts: first run `scripts/bootstrap-harness.sh`
+  on macOS/Linux or `.\scripts\bootstrap-harness.ps1` on Windows. Then use
+  `docs/FEATURE_INTAKE.md` to classify and record the request, query
+  `scripts/bin/harness-cli query matrix --active --summary` on macOS/Linux or
+  `.\scripts\bin\harness-cli.exe query matrix --active --summary` on Windows,
+  and retrieve only the lane- and task-specific context described in
+  `docs/CONTEXT_RULES.md`.
+<!-- HARNESS:END -->

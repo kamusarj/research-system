@@ -35,7 +35,17 @@ def get_gap(db: Session, gap_id: str) -> KnowledgeGap:
     return gap
 
 
-def detect_gaps(db: Session, max_coverage: int = 1) -> list[KnowledgeGap]:
+def _snooze_expired(gap: KnowledgeGap) -> bool:
+    if gap.status != "snoozed" or gap.snoozed_until is None:
+        return False
+    until = gap.snoozed_until
+    # SQLite trả về datetime không có múi giờ; giá trị được lưu theo UTC.
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=UTC)
+    return until <= datetime.now(UTC)
+
+
+def detect_gaps(db: Session, max_coverage: int = 1, *, commit: bool = True) -> list[KnowledgeGap]:
     rows = db.execute(
         select(Tag.name, Tag.display_name, func.count(ResearchItem.id))
         .join(research_tags, research_tags.c.tag_id == Tag.id)
@@ -50,14 +60,14 @@ def detect_gaps(db: Session, max_coverage: int = 1) -> list[KnowledgeGap]:
         key = f"low-coverage:{concept_key}"
         gap = db.scalar(select(KnowledgeGap).where(KnowledgeGap.key == key))
         reason = (
-            f"Concept '{display_name}' has only {coverage} approved research item(s); "
-            "additional evidence would improve graph coverage."
+            f"Khái niệm “{display_name}” mới có {coverage} tài liệu nghiên cứu được duyệt; "
+            "bổ sung bằng chứng sẽ giúp tăng độ phủ của đồ thị."
         )
         if coverage > max_coverage:
             if gap:
                 gap.coverage_count = coverage
                 gap.reason = (
-                    f"Concept '{display_name}' now has {coverage} approved research item(s)."
+                    f"Khái niệm “{display_name}” hiện có {coverage} tài liệu nghiên cứu được duyệt."
                 )
                 if gap.status not in {"dismissed", "deep-research-requested"}:
                     gap.status = "filled"
@@ -66,12 +76,13 @@ def detect_gaps(db: Session, max_coverage: int = 1) -> list[KnowledgeGap]:
         if gap:
             gap.coverage_count = coverage
             gap.reason = reason
-            if gap.status == "filled":
+            if gap.status == "filled" or _snooze_expired(gap):
                 gap.status = "detected"
+                gap.snoozed_until = None
         else:
             gap = KnowledgeGap(
                 key=key,
-                title=f"Expand coverage for {display_name}",
+                title=f"Mở rộng độ phủ cho {display_name}",
                 concept_key=concept_key,
                 coverage_count=coverage,
                 reason=reason,
@@ -88,7 +99,10 @@ def detect_gaps(db: Session, max_coverage: int = 1) -> list[KnowledgeGap]:
     for gap in active:
         if gap.key not in detected_keys:
             gap.status = "filled"
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return list(
         db.scalars(
             select(KnowledgeGap).order_by(
@@ -118,18 +132,18 @@ def request_deep_research(db: Session, gap: KnowledgeGap) -> ResearchItem:
     item = create_research(
         db,
         ResearchCreate(
-            title=f"Deep research: {gap.title}",
+            title=f"Nghiên cứu sâu: {gap.title}",
             type="deep-research-report",
             collection_method="ai-researched",
-            summary=f"Draft report requested for knowledge gap {gap.title}.",
+            summary=f"Bản nháp báo cáo dành cho khoảng trống tri thức: {gap.title}.",
             content=(
                 f"# {gap.title}\n\n"
-                "## Research question\n\n"
+                "## Câu hỏi nghiên cứu\n\n"
                 f"{gap.reason}\n\n"
-                "## Evidence\n\nAdd sourced evidence here.\n\n"
-                "## Findings\n\nDraft findings for human review.\n"
+                "## Bằng chứng\n\nBổ sung bằng chứng có nguồn tại đây.\n\n"
+                "## Phát hiện\n\nCác phát hiện nháp đang chờ con người kiểm duyệt.\n"
             ),
-            tags=[gap.concept_key, "deep research"],
+            tags=[gap.concept_key, "nghiên cứu sâu"],
             metadata={
                 "knowledge_gap_id": gap.id,
                 "requested_at": datetime.now(UTC).isoformat(),

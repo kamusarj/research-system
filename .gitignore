@@ -11,5 +11,19 @@ __pycache__/
 node_modules/
 .next/
 coverage/
+playwright-report/
+test-results/
 dist/
 exports/
+.secrets/
+
+# Harness durable layer
+harness.db
+harness.db-wal
+harness.db-shm
+scripts/bin/harness-cli
+scripts/bin/harness-cli.exe
+
+# Cấu hình triển khai nhóm và bản sao lưu cục bộ
+.env.team
+backups/

@@ -1,0 +1,15 @@
+[Unit]
+Description=Business AI Agents local Docker Compose stack
+After=graphical-session.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/business-ai-agents-autostart
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=5min
+
+[Install]
+WantedBy=default.target
