@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 type IconName = "dashboard" | "research" | "documents" | "sources" | "search" | "graph" | "changes" | "chat" | "gaps" | "collector" | "members";
 
@@ -101,6 +102,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="topbar-actions">
+          <ThemeToggle />
           {can("researcher") && <Link href="/ingestion" className="topbar-cta"><span aria-hidden="true">+</span>{t("addSources")}</Link>}
           {user && <div className="identity-menu" title={`${t("signedInAs")} ${user.email}`}>
             <span className="workspace-avatar">{user.name.slice(0, 1).toUpperCase()}</span>

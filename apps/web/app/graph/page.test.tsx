@@ -68,7 +68,7 @@ vi.mock("@/hooks/use-knowledge-graph", async () => {
   };
 });
 
-vi.mock("@/components/knowledge-graph/d3-graph-canvas", () => ({
+vi.mock("@/components/knowledge-graph/d3-graph-canvas-lazy", () => ({
   D3GraphCanvas: ({
     onNodeSelect,
     onExpandNode,

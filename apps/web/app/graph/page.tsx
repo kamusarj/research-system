@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { EdgeDetailsPanel } from "@/components/knowledge-graph/edge-details-panel";
 import { EvidenceList } from "@/components/knowledge-graph/evidence-list";
-import { D3GraphCanvas } from "@/components/knowledge-graph/d3-graph-canvas";
+import { D3GraphCanvas } from "@/components/knowledge-graph/d3-graph-canvas-lazy";
 import { GraphFilters } from "@/components/knowledge-graph/graph-filters";
 import { GraphLegend } from "@/components/knowledge-graph/graph-legend";
 import { GraphToolbar } from "@/components/knowledge-graph/graph-toolbar";

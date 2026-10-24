@@ -42,7 +42,7 @@ vi.mock("@tanstack/react-query", () => ({
   },
 }));
 
-vi.mock("@/components/knowledge-graph/d3-graph-canvas", () => ({
+vi.mock("@/components/knowledge-graph/d3-graph-canvas-lazy", () => ({
   D3GraphCanvas: ({
     nodes,
     layout,

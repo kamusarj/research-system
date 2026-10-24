@@ -68,18 +68,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     setError(null);
     try {
-      const config = await api<AuthConfig>("/auth/config");
+      // Hai yêu cầu chạy song song: chờ tuần tự làm cả ứng dụng chậm thêm một vòng mạng.
+      const [config, me] = await Promise.all([
+        api<AuthConfig>("/auth/config"),
+        api<AuthState>("/auth/me").then(
+          (state) => ({ state, error: null as unknown }),
+          (error: unknown) => ({ state: null, error }),
+        ),
+      ]);
       setEnabled(config.enabled);
       setCsrfCookieName(config.csrf_cookie_name);
-      try {
-        const state = await api<AuthState>("/auth/me");
-        setUser(state.user);
-      } catch (requestError) {
-        if (config.enabled && requestError instanceof ApiError && requestError.status === 401) {
-          setUser(null);
-        } else {
-          throw requestError;
-        }
+      if (me.state) {
+        setUser(me.state.user);
+      } else if (config.enabled && me.error instanceof ApiError && me.error.status === 401) {
+        setUser(null);
+      } else {
+        throw me.error;
       }
     } catch (requestError) {
       setUser(null);
@@ -182,7 +186,9 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     }
   }
 
-  if (loading) return <div className="auth-screen"><span className="spinner" />{t("loading")}</div>;
+  // Vẽ khung ứng dụng ngay trong lúc kiểm tra phiên (kể cả HTML từ máy chủ) thay vì một vòng
+  // xoay toàn màn hình; API vẫn tự kiểm tra quyền nên không lộ dữ liệu khi chưa đăng nhập.
+  if (loading) return <>{children}</>;
   if (error) return (
     <div className="auth-screen">
       <section className="auth-card">

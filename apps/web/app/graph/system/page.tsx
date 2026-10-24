@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { D3GraphCanvas } from "@/components/knowledge-graph/d3-graph-canvas";
+import { D3GraphCanvas } from "@/components/knowledge-graph/d3-graph-canvas-lazy";
 import { GraphLegend } from "@/components/knowledge-graph/graph-legend";
 import { GraphToolbar } from "@/components/knowledge-graph/graph-toolbar";
 import { NodeDetailsPanel } from "@/components/knowledge-graph/node-details-panel";

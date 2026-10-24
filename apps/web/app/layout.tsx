@@ -1,11 +1,8 @@
-import type { Metadata } from "next";
-import "@fontsource/inter/400.css";
-import "@fontsource/inter/500.css";
-import "@fontsource/inter/600.css";
-import "@fontsource/inter/700.css";
-import "@fontsource/inter/800.css";
+import type { Metadata, Viewport } from "next";
+import "@fontsource-variable/inter";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
+import { THEME_BOOT_SCRIPT } from "@/lib/theme";
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
@@ -14,6 +11,21 @@ export const metadata: Metadata = {
   icons: { icon: "/icon.svg" },
 };
 
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f1f5f3" },
+    { media: "(prefers-color-scheme: dark)", color: "#0c1615" },
+  ],
+};
+
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="vi"><body><Providers><AppShell>{children}</AppShell></Providers></body></html>;
+  return (
+    // data-theme do script dưới đặt trước khi React hydrate, nên bỏ qua khác biệt thuộc tính này.
+    <html lang="vi" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
+      </head>
+      <body><Providers><AppShell>{children}</AppShell></Providers></body>
+    </html>
+  );
 }
