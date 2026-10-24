@@ -12,6 +12,20 @@ use_default_settings:
       - arxiv
       - github
 
+# Một số engine mặc định tắt trong SearXNG; bật rõ ràng để có nhiều nguồn khi một engine bị
+# chặn (Brave/DuckDuckGo hay trả CAPTCHA hoặc "too many requests" với IP máy chủ).
+engines:
+  - name: bing
+    disabled: false
+  - name: mojeek
+    disabled: false
+  - name: startpage
+    disabled: false
+  - name: duckduckgo
+    disabled: false
+  - name: brave
+    disabled: false
+
 general:
   instance_name: "Business AI Agents research"
   enable_metrics: false
