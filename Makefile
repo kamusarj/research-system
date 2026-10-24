@@ -4,7 +4,7 @@ BOT_DIR := apps/discord-bot
 
 .PHONY: dev test lint build migrate seed evaluate-graph-v2 verify-graph verify-migrations discord-bot \
 	team-config team-up team-down team-ps team-logs team-owner team-member team-db-password \
-	team-backup team-verify
+	team-backup team-verify local-owner
 
 dev:
 	docker compose up --build
@@ -57,6 +57,11 @@ team-ps:
 
 team-logs:
 	scripts/team.sh logs
+
+# Tạo tài khoản chủ sở hữu cho runtime cục bộ (AUTH_MODE=local); mật khẩu nhập ẩn trong terminal.
+local-owner:
+	docker exec -it businessaiagents-api-1 python -m app.operations create-user \
+		--name "$(NAME)" --email "$(EMAIL)" --role owner --password-stdin
 
 team-owner:
 	NAME="$(NAME)" EMAIL="$(EMAIL)" scripts/team.sh owner

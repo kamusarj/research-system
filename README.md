@@ -63,7 +63,7 @@ API_PORT=18000 FRONTEND_PORT=13000 API_CORS_ORIGINS=http://localhost:13000 \
 scripts/verify_graph_multi_user.sh
 ```
 
-Phản hồi đồ thị lớn hơn 1 KiB được nén; thao tác đọc đồ thị dùng bộ nhớ tạm riêng trong trình duyệt 30 giây; giao diện tái sử dụng kết quả truy vấn thay vì tải lại mỗi khi cửa sổ được chọn. Không mở bộ dịch vụ cục bộ đang tắt xác thực này cho máy khác. Bản triển khai dùng chung phải bật xác thực/TLS theo hướng dẫn vận hành và đặt cổng tin cậy hoặc bộ giới hạn Redis dùng chung ở phía trước, vì bộ giới hạn tích hợp chỉ có hiệu lực trong từng tiến trình.
+Phản hồi đồ thị lớn hơn 1 KiB được nén; thao tác đọc đồ thị dùng bộ nhớ tạm riêng trong trình duyệt 30 giây; giao diện tái sử dụng kết quả truy vấn thay vì tải lại mỗi khi cửa sổ được chọn. Cổng chỉ nghe trên `127.0.0.1`; không mở bộ dịch vụ cục bộ cho máy khác khi còn tắt xác thực. Bản triển khai dùng chung phải bật xác thực/TLS theo hướng dẫn vận hành và đặt cổng tin cậy hoặc bộ giới hạn Redis dùng chung ở phía trước, vì bộ giới hạn tích hợp chỉ có hiệu lực trong từng tiến trình.
 
 - Giao diện web: <http://localhost:3000>
 - Tài liệu API: <http://localhost:8000/docs>
@@ -283,7 +283,9 @@ Màn hình tiếp nhận nhận một hoặc nhiều URL, xem trước loại ng
 
 ## Xác thực và quản lý bí mật
 
-Môi trường phát triển cục bộ tin cậy dùng `AUTH_MODE=disabled` và hoạt động như chủ sở hữu cục bộ. Với bản triển khai dùng chung, hãy bật xác thực cục bộ, tạo chủ sở hữu đầu tiên từ terminal tương tác, rồi tạo lại API và giao diện:
+Cổng API và giao diện mặc định chỉ nghe trên `127.0.0.1` (`API_BIND`/`FRONTEND_BIND`); máy khác trong LAN không truy cập trực tiếp được. Runtime cục bộ khuyến nghị bật đăng nhập (`AUTH_MODE=local` trong `.env.example`): tạo chủ sở hữu một lần bằng `make local-owner NAME="Họ tên" EMAIL=ten@example.com` (mật khẩu nhập ẩn, tối thiểu 12 ký tự), rồi tạo lại API/worker. `AUTH_MODE=disabled` (mọi request là chủ sở hữu cục bộ) chỉ dành cho máy phát triển một người và không bao giờ dùng khi mở tunnel hay LAN.
+
+Với bản triển khai dùng chung, hãy bật xác thực cục bộ, tạo chủ sở hữu đầu tiên từ terminal tương tác, rồi tạo lại API và giao diện:
 
 ```bash
 AUTH_MODE=local
