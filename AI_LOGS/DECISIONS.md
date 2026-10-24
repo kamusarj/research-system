@@ -1065,3 +1065,16 @@
 - Gói miễn phí cho Google dùng nội dung để cải thiện sản phẩm (kể cả tài liệu tải lên khi RAG
   lập chỉ mục). Đổi model phải lập chỉ mục lại.
 - Quyết định đầy đủ: `docs/decisions/0050-gemini-embedding-api.md`.
+
+## DEC-064 - Pipeline nghiên cứu sâu có trích dẫn và gia cố bảo mật cục bộ
+
+- Ngày: 2026-10-24; Harness intake #13 / high-risk `US-OPTIMIZATION-PROGRAM` / decision 0051.
+- Pipeline planner → searcher (SearXNG tự host + kho đã duyệt) → verifier (trích dẫn nguyên văn +
+  kiểm tra suy luận) → writer (máy chủ gắn `[n](url)`, từ chối câu không nguồn); báo cáo luôn là bản
+  nháp cần chủ sở hữu duyệt. Tắt mặc định (`RESEARCH_AGENT_ENABLED`).
+- Prompt tách chỉ dẫn và dữ liệu (`services/prompts.py`); `ai_call_metrics` đo token/độ trễ.
+- Cổng cục bộ `127.0.0.1`; chặn Host lạ/CSRF cross-site; chế độ nhóm tin `X-Forwarded-For` chỉ từ
+  `172.16.0.0/12` (thay `FORWARDED_ALLOW_IPS=*` của DEC-061); rate limit route AI; ghim IP khi tải
+  nguồn; CSP; che chuỗi giống khóa trong đầu ra AI; scope `research:run`/`research:read`.
+- Quyết định đầy đủ: `docs/decisions/0051-research-agent-and-hardening.md`.
+

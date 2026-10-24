@@ -116,6 +116,49 @@ Sau đó chủ sở hữu thêm thành viên tại **Quản trị → Thành vi�
 khẩu tại **Tài khoản** (`/account`). Sao lưu định kỳ bằng `make team-backup`. Hướng dẫn đầy đủ, phân
 quyền, khôi phục và xử lý sự cố: [`Docs/Team Deployment Runbook.md`](Docs/Team%20Deployment%20Runbook.md).
 
+## Nghiên cứu sâu: câu hỏi → báo cáo có trích dẫn
+
+Trang **Nghiên cứu sâu** (`/research/new`) nhận một câu hỏi và chạy pipeline bốn vai trò trong worker:
+
+1. **Planner** lập 10 truy vấn cho năm góc nhìn: thị trường, use case, đối thủ, kỹ thuật, rủi ro & tuân thủ.
+2. **Searcher** tìm qua SearXNG tự host và kho nghiên cứu đã duyệt, tải trang bằng bộ tải an toàn (chống SSRF, ghim IP), cache kết quả tìm kiếm/tải trang có hạn dùng, loại nguồn trùng (URL, mã băm, simhash) và giới hạn số nguồn mỗi tên miền.
+3. **Verifier** chỉ giữ nhận định có trích dẫn nguyên văn tìm thấy trong nguồn (khớp chính xác hoặc gần đúng nhưng không được khác phủ định/con số), số liệu trong nhận định phải có trong trích dẫn, rồi kiểm tra suy luận theo lô; thiếu phán quyết thì không dùng.
+4. **Writer** chỉ thấy nhận định đã kiểm chứng; máy chủ loại câu không dẫn nhận định hợp lệ, câu có số không có trong bằng chứng hoặc lệch nội dung, xóa link/HTML, rồi gắn trích dẫn `[n](url)` cho từng câu. Báo cáo có câu không nguồn bị từ chối.
+
+Màn theo dõi (`/research/runs/<id>`) hiện sáu bước kèm số đếm theo thời gian thực (Server-Sent Events, tự chuyển sang hỏi định kỳ nếu proxy đệm), báo cáo có số trích dẫn bấm được mở câu gốc trong bảng bằng chứng, chi tiết kiểm chứng (lý do loại từng nhận định), hủy/chạy lại, sao chép liên kết và tải Markdown. Kết quả luôn là bản nháp `deep-research-report` cần chủ sở hữu duyệt. Nút nghiên cứu sâu ở trang **Khoảng trống tri thức** chạy cùng pipeline và gắn báo cáo vào khoảng trống.
+
+Bật tính năng (tắt mặc định):
+
+```bash
+# .env
+RESEARCH_AGENT_ENABLED=true
+SEARXNG_SECRET=$(openssl rand -hex 32)   # ghi giá trị cụ thể vào .env
+# RESEARCH_AGENT_PROVIDER=deepseek       # chế độ nhóm tắt cầu nối CLI nên cần nhà cung cấp API
+
+docker compose --profile research-agent up -d searxng
+```
+
+SearXNG chỉ nghe trong mạng Docker (không mở cổng). Một số engine (Brave, DuckDuckGo) có thể chặn IP máy chủ; `ops/searxng/settings.yml` bật thêm Bing/Mojeek/Startpage. Giới hạn mỗi người: một lượt đang chạy, `RESEARCH_RUNS_PER_USER_PER_DAY` lượt/ngày, `RATE_LIMIT_RESEARCH_RUNS_PER_WINDOW` lượt/phút và tối đa `RESEARCH_MAX_LLM_CALLS` lượt gọi AI mỗi lượt (kể cả lượt lỗi).
+
+Skill cho Claude Code của nhóm (thư mục `.claude/skills/`):
+
+- `/research-report <câu hỏi>` chạy `scripts/research-report.sh`, lưu báo cáo vào `research-reports/` (gitignore) và tóm tắt kèm trích dẫn. Chế độ nhóm dùng `RESEARCH_API_URL` và token tài khoản dịch vụ có scope `research:run` + `research:read` (token chỉ thấy lượt của chính nó).
+- `/research-eval` chạy bộ 8 câu hỏi (`apps/api/app/evaluation/research_eval_v1.json`) cho hai biến thể và so sánh thời gian, lượt gọi AI, token, độ phủ trích dẫn, tỉ lệ trích dẫn khớp nguồn, nguồn trùng, độ phủ góc nhìn:
+
+```bash
+docker exec -w /app businessaiagents-api-1 python -m app.operations research-eval --variant naive --output /tmp/naive.json
+docker exec -w /app businessaiagents-api-1 python -m app.operations research-eval --variant optimized --output /tmp/optimized.json
+docker exec -w /app businessaiagents-api-1 python -m app.operations research-eval-compare /tmp/naive.json /tmp/optimized.json
+```
+
+Mỗi lần eval dùng cache riêng nên biến thể sau không hưởng cache của biến thể trước; lượt eval không vào hàng đợi worker.
+
+Chi phí AI đo bằng bảng `ai_call_metrics` (độ trễ, token vào/ra/tổng, token được cache, độ dài prompt cho mỗi lời gọi; không lưu prompt hay câu trả lời):
+
+```bash
+docker exec -w /app businessaiagents-api-1 python -m app.operations ai-usage-report --since-hours 24
+```
+
 ## Chạy để phát triển
 
 API (dùng `apps/api/research.db` nếu chưa đặt `DATABASE_URL`):
@@ -175,7 +218,7 @@ Trình duyệt dùng yêu cầu tương đối `/api/v1`. Next.js chuyển tiế
 
 ### Hệ thống thiết kế giao diện
 
-Ứng dụng dùng mô hình “không gian làm việc nghiên cứu” với nhận diện xanh đại dương: phông Inter tự lưu trữ, nền giấy xanh xám nhạt `#f1f5f3`, nút hành động xanh ngọc dễ tiếp cận `#087a70`, điểm nhấn chàm, bề mặt sáng phẳng và đường viền rõ. Từ `1181px`, sidebar xanh navy chia tuyến thành hai nhóm “Quy trình nghiên cứu” và “Phân tích và tri thức”; vùng nội dung có thanh ngữ cảnh, trạng thái hệ thống và lối tắt tìm kiếm. Máy tính bảng/điện thoại tự chuyển sang thanh trên cùng cùng điều hướng cuộn ngang để mọi không gian vẫn truy cập được. Chân trang tối chỉ giữ tên sản phẩm, ba liên kết chính và bản quyền. Các trang tổng quan, tiếp nhận, tài liệu, nghiên cứu, tìm kiếm, đồ thị, khoảng trống và bộ thu thập dùng chung token, điều khiển biểu mẫu, nhãn, bảng, trạng thái rỗng/lỗi và cách diễn đạt tiếng Việt.
+Giao diện có chế độ sáng/tối (theo hệ điều hành hoặc nút trên thanh bên, lưu trong trình duyệt), token màu/chữ/khoảng cách/chuyển động trong `app/globals.css`, viền focus 2px tương phản cao và khung chờ giữ chỗ để trang không nhảy bố cục; vùng đồ thị và bản xem trước tài liệu luôn dùng nền sáng. Ứng dụng dùng mô hình “không gian làm việc nghiên cứu” với nhận diện xanh đại dương: phông Inter Variable tự lưu trữ, nền giấy xanh xám nhạt `#f1f5f3`, nút hành động xanh ngọc dễ tiếp cận `#087a70`, điểm nhấn chàm, bề mặt sáng phẳng và đường viền rõ. Từ `1181px`, sidebar xanh navy chia tuyến thành hai nhóm “Quy trình nghiên cứu” và “Phân tích và tri thức”; vùng nội dung có thanh ngữ cảnh, trạng thái hệ thống và lối tắt tìm kiếm. Máy tính bảng/điện thoại tự chuyển sang thanh trên cùng cùng điều hướng cuộn ngang để mọi không gian vẫn truy cập được. Chân trang tối chỉ giữ tên sản phẩm, ba liên kết chính và bản quyền. Các trang tổng quan, tiếp nhận, tài liệu, nghiên cứu, tìm kiếm, đồ thị, khoảng trống và bộ thu thập dùng chung token, điều khiển biểu mẫu, nhãn, bảng, trạng thái rỗng/lỗi và cách diễn đạt tiếng Việt.
 
 Bộ kiểm thử bao phủ vòng đời và phiên bản nghiên cứu, nhận diện nguồn và chuẩn hóa URL, tìm kiếm chỉ trên dữ liệu đã duyệt, phản hồi đồ thị có kiểm tra/giới hạn, vòng đời Cytoscape, nguồn gốc AI, tiếp nhận RSS sau kiểm duyệt và không gian tài liệu có thể sửa.
 
@@ -316,6 +359,32 @@ GET  /api/v1/intake/receipts/{receipt_id}
 Đường dẫn tương thích `POST /api/v1/ingestion/links` vẫn dành cho trình duyệt/người dùng cục bộ và tự tạo biên nhận ngầm. Lưu token bộ điều hợp trong trình quản lý bí mật của bản triển khai, không bao giờ đưa vào mã nguồn hoặc `AI_LOGS`; thu hồi/thay token bằng API chủ sở hữu khi xoay vòng bộ kết nối.
 
 Cấu hình ưu tiên đọc thông tin xác thực từ `/run/secrets/<setting_name>` trước biến môi trường. Dùng `docker-compose.secrets.example.yml` làm lớp phủ sau khi trỏ các biến `*_SECRET_FILE` cần thiết tới tệp riêng tư trên máy. Giữ tệp Compose cơ sở cho phát triển cục bộ; không commit tệp bí mật hoặc ghi giá trị vào `AI_LOGS`.
+
+## Hướng dẫn bảo mật cho nhóm
+
+Đã có trong hệ thống:
+
+- Cổng API/giao diện chỉ nghe `127.0.0.1`; chế độ nhóm bắt buộc đăng nhập, HTTPS qua Caddy/Cloudflare Tunnel, cookie `__Host-` và CSRF. Giới hạn đăng nhập theo tài khoản và IP thật (chỉ tin `X-Forwarded-For` từ mạng Docker, `FORWARDED_ALLOW_IPS`).
+- `RequestGuardMiddleware` chặn Host lạ (DNS rebinding) và request thay đổi dữ liệu từ trang khác, kể cả khi tắt đăng nhập. Host thêm (ví dụ `.trycloudflare.com` cho quick tunnel) khai báo ở `API_TRUSTED_HOSTS`.
+- Nội dung web/tài liệu chỉ được đưa vào prompt trong khối `<source>` đã làm sạch, sau chỉ dẫn hệ thống chung; nội dung có dấu hiệu prompt injection không được tự duyệt; đầu ra AI có chuỗi giống khóa bị che.
+- Mọi route tiêu tốn quota AI có giới hạn tần suất; lời gọi AI có trần token đầu ra.
+- Tải nguồn chặn địa chỉ nội bộ và ghim kết nối vào IP đã kiểm (chống SSRF/DNS rebinding); giao diện có Content-Security-Policy.
+
+Quy tắc khi làm việc:
+
+1. Sau khi clone, chạy `scripts/install-git-hooks.sh` để bật hook pre-commit quét secret (gitleaks, phiên bản ghim, kiểm SHA-256). CI (`.github/workflows/security.yml`) quét toàn bộ lịch sử, `npm audit` và `pip-audit`.
+2. Không bao giờ đưa khóa vào mã, `.env.example`, AI_LOGS hay ảnh chụp; dùng `.env` (gitignore) hoặc tệp secret (`docker-compose.secrets.example.yml`).
+3. Chỉ mở tunnel/LAN khi đã bật đăng nhập (`AUTH_MODE=local`, tạo chủ sở hữu bằng `make local-owner`). Tắt quick tunnel khi không dùng.
+4. Token tài khoản dịch vụ cấp scope hẹp nhất (`intake:*` cho bộ thu thập, `research:*` cho skill nghiên cứu) và thu hồi khi không dùng.
+5. Duyệt báo cáo AI như duyệt bản nháp của người khác: mở câu gốc trong bảng bằng chứng trước khi xuất bản.
+
+Kiểm tra định kỳ:
+
+```bash
+scripts/bin/gitleaks git --redact --config .gitleaks.toml .
+(cd apps/web && npm audit)
+(cd apps/api && uv export --frozen --no-emit-project --no-hashes -o /tmp/req.txt && uvx pip-audit -r /tmp/req.txt --no-deps --disable-pip)
+```
 
 ## Kho đối tượng cho tệp đính kèm
 
@@ -480,4 +549,4 @@ Trợ lý có thể đọc ngữ cảnh theo phạm vi và tạo đề xuất th
 
 ## Giới hạn hiện tại
 
-SSO production, triển khai Kubernetes/đám mây, trình thu thập đa nguồn, tác nhân nghiên cứu sâu tự chủ, tín hiệu khoảng trống từ xu hướng/tìm kiếm thất bại và bản tin tuần được chủ động hoãn theo kế hoạch. Nội dung Facebook riêng tư/khóa vùng, tự chép lời media Reel và toàn văn có tường phí vẫn không khả dụng. OCR và dựng trang bằng trình duyệt là bộ điều hợp tùy chọn có giới hạn; hệ thống báo giới hạn bằng mã thay vì vượt kiểm soát truy cập hoặc coi trích xuất rỗng là thành công.
+SSO production, triển khai Kubernetes/đám mây, trình thu thập đa nguồn, tín hiệu khoảng trống từ xu hướng/tìm kiếm thất bại và bản tin tuần được chủ động hoãn theo kế hoạch. Nội dung Facebook riêng tư/khóa vùng, tự chép lời media Reel và toàn văn có tường phí vẫn không khả dụng. OCR và dựng trang bằng trình duyệt là bộ điều hợp tùy chọn có giới hạn; hệ thống báo giới hạn bằng mã thay vì vượt kiểm soát truy cập hoặc coi trích xuất rỗng là thành công. Nghiên cứu sâu phụ thuộc chất lượng máy tìm kiếm (engine có thể chặn IP máy chủ) và chỉ đọc trang công khai; trích dẫn được kiểm chứng nguyên văn nhưng người duyệt vẫn phải đánh giá độ tin cậy của nguồn.
