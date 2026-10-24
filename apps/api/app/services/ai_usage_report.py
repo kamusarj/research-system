@@ -23,6 +23,7 @@ def ai_usage_report(db: Session, *, since_hours: float) -> dict[str, Any]:
             func.sum(AICallMetric.input_tokens),
             func.sum(AICallMetric.output_tokens),
             func.sum(AICallMetric.cached_input_tokens),
+            func.sum(AICallMetric.total_tokens),
             func.avg(AICallMetric.prompt_chars),
             func.sum(func.cast(AICallMetric.cache_hit, Integer)),
         )
@@ -42,6 +43,7 @@ def ai_usage_report(db: Session, *, since_hours: float) -> dict[str, Any]:
             "total_input_tokens": int(total_input or 0),
             "total_output_tokens": int(total_output or 0),
             "total_cached_input_tokens": int(total_cached or 0),
+            "total_tokens": int(total_tokens or 0),
             "avg_prompt_chars": _round(avg_chars),
             "cache_hits": int(cache_hits or 0),
         }
@@ -56,6 +58,7 @@ def ai_usage_report(db: Session, *, since_hours: float) -> dict[str, Any]:
             total_input,
             total_output,
             total_cached,
+            total_tokens,
             avg_chars,
             cache_hits,
         ) in rows

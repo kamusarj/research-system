@@ -135,3 +135,20 @@ def test_usage_report_aggregates_by_operation(db):
     assert row["calls"] == 2
     assert row["avg_input_tokens"] == 200.0
     assert row["total_output_tokens"] == 20
+
+
+def test_cli_bridge_total_only_usage_is_not_recorded_as_zero(monkeypatch, recorded):
+    monkeypatch.setattr(
+        ai,
+        "bridge_complete",
+        lambda *_args, **_kwargs: {
+            "output": {"answer": "ok"},
+            "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 1234},
+        },
+    )
+    runtime = ai.CodexProvider()
+    with provider_observation(provider="codex", model=runtime.name, operation="probe"):
+        runtime.complete_json("prompt", Probe)
+    row = recorded[0]
+    assert row["total_tokens"] == 1234
+    assert row["input_tokens"] is None and row["output_tokens"] is None

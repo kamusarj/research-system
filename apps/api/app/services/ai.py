@@ -258,9 +258,16 @@ class CliBridgeProvider(BaseProvider):
             system=CLI_SYSTEM_PROMPT,
         )
         usage = payload.get("usage") or {}
+        input_tokens = usage.get("input_tokens") or None
+        output_tokens = usage.get("output_tokens") or None
+        total = usage.get("total_tokens") or None
+        if total is None and input_tokens is not None and output_tokens is not None:
+            total = input_tokens + output_tokens
+        # Codex chỉ báo tổng: để trống vào/ra (không rõ) thay vì ghi 0 gây hiểu nhầm.
         report_usage(
-            input_tokens=usage.get("input_tokens"),
-            output_tokens=usage.get("output_tokens"),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total,
             prompt_chars=len(prompt),
         )
         return schema.model_validate(payload["output"])

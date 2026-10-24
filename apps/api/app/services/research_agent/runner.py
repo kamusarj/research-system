@@ -515,6 +515,7 @@ def _llm_many(
         ctx.bump("input_tokens", int(usage.get("input_tokens") or 0))
         ctx.bump("output_tokens", int(usage.get("output_tokens") or 0))
         ctx.bump("cached_input_tokens", int(usage.get("cached_input_tokens") or 0))
+        ctx.bump("total_tokens", int(usage.get("total_tokens") or 0))
         ctx.bump("prompt_chars", len(prompts[index]))
         ctx.db.add(
             AIOutput(
@@ -675,7 +676,7 @@ def stage_searching(ctx: RunContext) -> str:
             domain = "kho nội bộ" if hit.research_item_id else registrable_domain(url)
             ctx.bump("hits_total")
             if url in seen_urls:
-                ctx.bump("duplicates_removed")
+                ctx.bump("hits_repeated")  # cùng URL trả về cho nhiều truy vấn, không phải bản sao
                 continue
             seen_urls.add(url)
             candidates.append(

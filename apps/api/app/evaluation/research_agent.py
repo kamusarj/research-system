@@ -80,6 +80,8 @@ def score_run(
         "llm_cache_hits": int(metrics.get("llm_cache_hits", 0)),
         "input_tokens": int(metrics.get("input_tokens", 0)),
         "output_tokens": int(metrics.get("output_tokens", 0)),
+        "total_tokens": int(metrics.get("total_tokens", 0))
+        or int(metrics.get("input_tokens", 0)) + int(metrics.get("output_tokens", 0)),
         "prompt_chars": int(metrics.get("prompt_chars", 0)),
         "citation_coverage": round(cited / (cited + uncited), 3) if cited + uncited else 0.0,
         "cited_sentences": cited,
@@ -126,6 +128,7 @@ SUMMARY_FIELDS = (
     "llm_calls",
     "input_tokens",
     "output_tokens",
+    "total_tokens",
     "prompt_chars",
     "citation_coverage",
     "quote_verification_rate",

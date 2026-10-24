@@ -12,7 +12,13 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-USAGE_FIELDS = ("input_tokens", "output_tokens", "cached_input_tokens", "prompt_chars")
+USAGE_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cached_input_tokens",
+    "total_tokens",
+    "prompt_chars",
+)
 
 _current: ContextVar[dict[str, Any] | None] = ContextVar("ai_call_usage", default=None)
 
@@ -22,6 +28,7 @@ def report_usage(
     input_tokens: int | None = None,
     output_tokens: int | None = None,
     cached_input_tokens: int | None = None,
+    total_tokens: int | None = None,
     prompt_chars: int | None = None,
     cache_hit: bool = False,
 ) -> None:
@@ -33,6 +40,7 @@ def report_usage(
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "cached_input_tokens": cached_input_tokens,
+        "total_tokens": total_tokens,
         "prompt_chars": prompt_chars,
     }
     for key, value in values.items():
@@ -48,6 +56,7 @@ def report_usage_dict(usage: dict[str, Any] | None, *, prompt_chars: int | None 
         input_tokens=_int(usage.get("input_tokens")),
         output_tokens=_int(usage.get("output_tokens")),
         cached_input_tokens=_int(usage.get("cached_input_tokens")),
+        total_tokens=_int(usage.get("total_tokens")),
         prompt_chars=prompt_chars,
     )
 

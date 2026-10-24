@@ -267,6 +267,8 @@ class AICallMetric(Base):
     input_tokens: Mapped[int | None] = mapped_column(Integer)
     output_tokens: Mapped[int | None] = mapped_column(Integer)
     cached_input_tokens: Mapped[int | None] = mapped_column(Integer)
+    # Một số nhà cung cấp (Codex CLI) chỉ báo tổng, không tách token vào/ra.
+    total_tokens: Mapped[int | None] = mapped_column(Integer)
     prompt_chars: Mapped[int | None] = mapped_column(Integer)
     cache_hit: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
