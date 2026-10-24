@@ -1,29 +1,36 @@
 # SearXNG chỉ phục vụ pipeline nghiên cứu sâu trong mạng Compose nội bộ (không publish cổng).
 # Khóa bí mật lấy từ biến môi trường SEARXNG_SECRET.
+#
+# Danh sách engine chọn theo kiểm thử thực tế ngày 2026-10-24 từ máy chủ này: Bing web, Mojeek,
+# Startpage trả kết quả lạc đề (chỉ khớp từ đầu tiên), Brave/DuckDuckGo/Google/Qwant chặn IP.
+# Các engine dưới đây trả kết quả đúng chủ đề cho truy vấn về AI agent doanh nghiệp.
 use_default_settings:
   engines:
     keep_only:
-      - duckduckgo
-      - brave
-      - bing
-      - mojeek
-      - startpage
+      - yahoo
+      - yep
+      - bing news
+      - mwmbl
+      - hackernews
       - wikipedia
+      - semantic scholar
+      - openalex
+      - crossref
       - arxiv
       - github
 
-# Một số engine mặc định tắt trong SearXNG; bật rõ ràng để có nhiều nguồn khi một engine bị
-# chặn (Brave/DuckDuckGo hay trả CAPTCHA hoặc "too many requests" với IP máy chủ).
 engines:
-  - name: bing
+  - name: yahoo
     disabled: false
-  - name: mojeek
+  - name: yep
     disabled: false
-  - name: startpage
+  - name: mwmbl
     disabled: false
-  - name: duckduckgo
+  - name: hackernews
     disabled: false
-  - name: brave
+  - name: openalex
+    disabled: false
+  - name: crossref
     disabled: false
 
 general:
@@ -44,5 +51,5 @@ search:
     - json
 
 outgoing:
-  request_timeout: 3.0
-  max_request_timeout: 6.0
+  request_timeout: 4.0
+  max_request_timeout: 8.0

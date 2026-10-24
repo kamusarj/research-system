@@ -60,6 +60,8 @@ from app.services.research_agent.search import (
     cache_put,
     canonical_url,
     content_fingerprint,
+    content_terms,
+    hit_relevance,
     near_duplicate,
     normalized_query,
     providers_from_settings,
@@ -67,6 +69,7 @@ from app.services.research_agent.search import (
     registrable_domain,
     run_parallel,
     simhash,
+    text_relevance,
 )
 from app.services.research_agent.writer import (
     SourceRef,
@@ -114,6 +117,8 @@ VARIANTS: dict[str, dict[str, bool]] = {
     },
 }
 MIN_SOURCE_CHARS = 400
+# Kết quả tìm kiếm phải chứa ít nhất 1/3 từ khóa của truy vấn ở tiêu đề/đoạn trích/URL.
+MIN_HIT_RELEVANCE = 0.34
 # Lượt chạy do lệnh eval tạo: worker không nhận, để eval tự điều khiển từng bước và đo thời gian.
 EVAL_ACTOR = "research-eval"
 FALLBACK_QUERY_SUFFIX = {
@@ -726,6 +731,9 @@ def stage_searching(ctx: RunContext) -> str:
     domain_counts: dict[str, int] = {}
     for (provider_name, query), hits in hits_by_query.items():
         for hit in hits:
+            if hit_relevance(query, hit) < MIN_HIT_RELEVANCE:
+                ctx.bump("hits_irrelevant")
+                continue
             url = canonical_url(hit.url)
             domain = "kho nội bộ" if hit.research_item_id else registrable_domain(url)
             ctx.bump("hits_total")
@@ -831,6 +839,14 @@ def stage_fetching(ctx: RunContext) -> str:
         _apply_fetch(source, payload)
 
     ready = [s for s in sources if s.status == "ready"]
+    for source in ready:
+        source.suspicious = bool(injection_signals(source.content_text))
+        # Trang tải về phải thật sự nói về truy vấn đã tìm ra nó (tránh trang chủ, trang chặn bot).
+        terms = content_terms(source.query)
+        if terms and text_relevance(terms, source.content_text) < min(3, len(terms)):
+            source.status = "off_topic"
+            ctx.bump("sources_off_topic")
+    ready = [s for s in ready if s.status == "ready"]
     if ctx.flags.get("dedup"):
         kept: list[ResearchRunSource] = []
         for source in ready:
@@ -854,7 +870,6 @@ def stage_fetching(ctx: RunContext) -> str:
         ready = kept
     chosen = {s.id for s in _balanced(ready, settings.research_max_sources)}
     for source in ready:
-        source.suspicious = bool(injection_signals(source.content_text))
         if source.id not in chosen:
             source.status = "skipped"
     ctx.metrics["sources_fetched"] = sum(1 for s in sources if s.fetched_at is not None)

@@ -147,6 +147,38 @@ def providers_from_settings(db: Session) -> list[SearchProvider]:
     return providers
 
 
+# --- Độ liên quan -----------------------------------------------------------------------------
+
+_TERM = re.compile(r"[^\W_]{2,}", re.UNICODE)
+STOPWORDS = frozenset(
+    """the and for with from that this what how are was were has have into over your their about
+    can will not but its our who why when which than then also more most such use using used via
+    các của cho với trong những một như này được là và có không khi thì để theo về đến từ tại
+    gì sao nào bao nhiêu thế ra đang đã sẽ""".split()
+)
+
+
+def content_terms(text: str) -> set[str]:
+    return {term for term in (t.casefold() for t in _TERM.findall(text)) if term not in STOPWORDS}
+
+
+def hit_relevance(query: str, hit: SearchHit) -> float:
+    """Tỉ lệ từ khóa của truy vấn có trong tiêu đề/đoạn trích/URL của kết quả.
+
+    Máy tìm kiếm miễn phí đôi khi trả kết quả chỉ khớp một từ (ví dụ "enterprise" → thuê xe);
+    kết quả kiểu đó bị loại trước khi tốn công tải trang và gọi AI."""
+    wanted = content_terms(query)
+    if not wanted:
+        return 1.0
+    found = content_terms(f"{hit.title} {hit.snippet} {urlsplit(hit.url).path.replace('-', ' ')}")
+    return len(wanted & found) / len(wanted)
+
+
+def text_relevance(query_terms: set[str], text: str) -> int:
+    """Số từ khóa khác nhau của truy vấn xuất hiện trong nội dung đã tải."""
+    return len(query_terms & content_terms(text[:20_000]))
+
+
 # --- Bộ nhớ đệm -------------------------------------------------------------------------------
 
 
