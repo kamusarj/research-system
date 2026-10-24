@@ -80,6 +80,36 @@ RATE_POLICIES: tuple[tuple[str, re.Pattern[str], RatePolicy], ...] = (
     # Các lệnh dưới đây gọi nhà cung cấp AI/embedding có tính phí.
     (
         "POST",
+        re.compile(r"^/api/v1/ingestion/links(?:/[^/]+/retry)?/?$"),
+        RatePolicy("link-intake", "rate_limit_intake_per_window"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/v1/documents/brainstorm/?$"),
+        RatePolicy("document-brainstorm", "rate_limit_chat_per_window"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/v1/documents/[^/]+/ai-edits/?$"),
+        RatePolicy("document-ai-edit", "rate_limit_chat_per_window"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/v1/documents/[^/]+/(?:graph/research|rag/rebuild)/?$"),
+        RatePolicy("document-ai-analysis", "rate_limit_analysis_per_window"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/v1/collector/sources/[^/]+/run/?$"),
+        RatePolicy("collector-run", "rate_limit_analysis_per_window"),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/v1/(?:research-runs|gaps/[^/]+/research-run)/?$"),
+        RatePolicy("research-run", "rate_limit_research_runs_per_window"),
+    ),
+    (
+        "POST",
         re.compile(r"^/api/v1/ai/(?:summarize|extract-concepts|suggest-relations|enrich/[^/]+)$"),
         RatePolicy("ai-enrichment", "rate_limit_analysis_per_window"),
     ),

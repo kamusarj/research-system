@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     rate_limit_analysis_per_window: int = 10
     rate_limit_chat_per_window: int = 30
     rate_limit_apply_per_window: int = 10
+    # Gửi link (mỗi link một lượt AI phân loại) và khởi chạy nghiên cứu sâu.
+    rate_limit_intake_per_window: int = 20
+    rate_limit_research_runs_per_window: int = 3
     api_slow_request_ms: int = 2_000
     http_gzip_minimum_size: int = Field(default=1024, ge=256, le=1_000_000)
     http_gzip_compresslevel: int = Field(default=5, ge=1, le=9)

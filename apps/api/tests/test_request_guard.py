@@ -76,3 +76,41 @@ def test_wildcard_disables_host_check(client, monkeypatch):
     monkeypatch.setattr(settings, "api_trusted_hosts", "*")
     response = client.get("/api/v1/health", headers={"Host": "anything.example"})
     assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("path", "bucket"),
+    [
+        ("/api/v1/ingestion/links", "link-intake"),
+        ("/api/v1/ingestion/links/abc/retry", "link-intake"),
+        ("/api/v1/documents/brainstorm", "document-brainstorm"),
+        ("/api/v1/documents/abc/ai-edits", "document-ai-edit"),
+        ("/api/v1/documents/abc/graph/research", "document-ai-analysis"),
+        ("/api/v1/documents/abc/rag/rebuild", "document-ai-analysis"),
+        ("/api/v1/collector/sources/abc/run", "collector-run"),
+        ("/api/v1/research-runs", "research-run"),
+        ("/api/v1/gaps/abc/research-run", "research-run"),
+    ],
+)
+def test_ai_spending_routes_are_rate_limited(path, bucket):
+    from app.core.runtime_controls import RATE_POLICIES
+
+    matched = [
+        policy.bucket
+        for method, pattern, policy in RATE_POLICIES
+        if method == "POST" and pattern.fullmatch(path)
+    ]
+    assert matched == [bucket]
+
+
+def test_research_run_creation_hits_the_rate_limit(client, monkeypatch):
+    monkeypatch.setattr(settings, "research_agent_enabled", False)
+    monkeypatch.setattr(settings, "rate_limit_research_runs_per_window", 2)
+    statuses = [
+        client.post(
+            "/api/v1/research-runs", json={"question": "Tính năng đang tắt thì sao?"}
+        ).status_code
+        for _ in range(3)
+    ]
+    assert statuses[:2] == [503, 503]
+    assert statuses[2] == 429
