@@ -30,6 +30,15 @@ def _hostname(authority: str) -> str:
     return (urlsplit(f"//{value}").hostname or "").lower()
 
 
+def host_trusted(host: str, trusted: set[str]) -> bool:
+    """Khớp chính xác, hoặc theo hậu tố với mục bắt đầu bằng "." (".trycloudflare.com" khớp mọi
+    tên miền con). Tên miền của dịch vụ tunnel không thể bị kẻ tấn công trỏ về 127.0.0.1 nên
+    không mở lại lỗ hổng DNS rebinding."""
+    if host in trusted:
+        return True
+    return any(entry.startswith(".") and host.endswith(entry) for entry in trusted)
+
+
 def _blocked(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(
         status_code=status_code, content={"error": {"code": code, "message": message}}
@@ -42,7 +51,7 @@ class RequestGuardMiddleware(BaseHTTPMiddleware):
         if trusted is not None:
             for header in ("host", "x-forwarded-host"):
                 value = request.headers.get(header)
-                if value is not None and _hostname(value) not in trusted:
+                if value is not None and not host_trusted(_hostname(value), trusted):
                     return _blocked(
                         400, "HOST_NOT_ALLOWED", "Tên máy chủ của yêu cầu không được chấp nhận"
                     )
@@ -54,7 +63,7 @@ class RequestGuardMiddleware(BaseHTTPMiddleware):
                 allowed = fetch_site in SAME_ORIGIN_FETCH_SITES
             elif origin is not None:
                 allowed = trusted is None or (
-                    origin != "null" and _hostname(urlsplit(origin).netloc) in trusted
+                    origin != "null" and host_trusted(_hostname(urlsplit(origin).netloc), trusted)
                 )
             else:
                 allowed = True

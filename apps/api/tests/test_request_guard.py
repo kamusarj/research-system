@@ -114,3 +114,17 @@ def test_research_run_creation_hits_the_rate_limit(client, monkeypatch):
     ]
     assert statuses[:2] == [503, 503]
     assert statuses[2] == 429
+
+
+def test_suffix_entries_trust_tunnel_subdomains(client, monkeypatch):
+    monkeypatch.setattr(settings, "api_trusted_hosts", "testserver,.trycloudflare.com")
+    tunnel = client.get(
+        "/api/v1/health",
+        headers={"Host": "api:8000", "X-Forwarded-Host": "abc-def.trycloudflare.com"},
+    )
+    assert tunnel.status_code == 200
+    lookalike = client.get(
+        "/api/v1/health",
+        headers={"Host": "api:8000", "X-Forwarded-Host": "trycloudflare.com.attacker.example"},
+    )
+    assert lookalike.status_code == 400
