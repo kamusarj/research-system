@@ -2,13 +2,23 @@
 
 ## Current Goal
 
-- Ngày 2026-10-24 audit tối ưu toàn diện (research / UI / bảo mật), chưa sửa code ứng dụng; chờ
-  Linh duyệt kế hoạch. Baseline: API 460/460, vitest 180/180; link intake trung vị 12,6 giây;
-  chat ~10.400 token vào/lượt; Lighthouse mobile Perf 77–93, A11y 94–100. Lỗ hổng: `next` 15.5.23
-  Critical (→15.5.28), `pypdf`/`pillow`/`urllib3` nhiều advisory, cổng 13000/18000 nghe `0.0.0.0`
-  khi `AUTH_MODE=disabled` (High). Lịch sử git không có secret. Đã bật plugin project
-  `frontend-design`, `claude-security` (`.claude/settings.json`). Session:
-  `AI_LOGS/SESSIONS/2026-10-24-0052-optimization-audit.md`.
+- Ngày 2026-10-24 chương trình tối ưu toàn diện (Harness intake #13 / high-risk
+  `US-OPTIMIZATION-PROGRAM`, story `docs/stories/optimization-program/`). Đã commit từng bước trên
+  `feature/research-system-mvp` (snapshot nền `dce73d7` + các commit sau): pre-commit gitleaks
+  (`scripts/install-git-hooks.sh`, `.github/workflows/security.yml`); vá `next` 15.5.28, `sharp`,
+  `source-map-js`, vitest 4.1.12 (Vite 8/oxc) → npm audit 0; vá `pypdf` 6.21.2, `pillow` 13,
+  `urllib3`, `certifi`, `aiohttp`, `multidict`, pytest 9 → pip-audit 0; Dockerfile API cài từ
+  `uv.lock` có kiểm hash (ảnh api/worker đã build lại); cổng 13000/18000 chỉ nghe 127.0.0.1;
+  `RequestGuardMiddleware` chặn DNS rebinding/CSRF cross-site; bảng `ai_call_metrics` (migration
+  `4a6c8e0b2d35`, đã áp dụng sau pg_dump `~/business-ai-agents-backups/*-before-ai-call-metrics`) +
+  `python -m app.operations ai-usage-report`; prompt chuẩn `services/prompts.py` (system chung,
+  `<source>` đã làm sạch, max_tokens, temperature 0, chặn tự duyệt khi có dấu hiệu injection,
+  Discord auto-approve mặc định tắt); chat giảm 16% ký tự mỗi lượt gọi; tài liệu không liên quan
+  bỏ lời gọi AI trích xuất ngữ nghĩa. API 484/484, bot 55/55, web vitest 180/180.
+  **Chưa xong**: bật `AUTH_MODE=local` cục bộ chờ Linh chạy `make local-owner`; pipeline câu hỏi →
+  báo cáo (SearXNG), UI/dark mode, bảo mật Medium còn lại. **Đĩa còn ~0,7 GB** sau khi build lại ảnh
+  API (ảnh mới lưu cả nén + giải nén) — cần Linh giải phóng trước khi kéo ảnh SearXNG.
+  Session: `AI_LOGS/SESSIONS/2026-10-24-0052-optimization-audit.md`.
 
 - Ngày 2026-10-24 thêm embedding qua Gemini API miễn phí (Harness intake #12 / high-risk
   `US-GEMINI-EMBEDDING-API` / DEC-063 / decision 0050). `SEARCH_EMBEDDING_PROVIDER=gemini` +
