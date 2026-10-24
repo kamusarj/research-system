@@ -72,7 +72,9 @@ class IntakeGatewayClient(discord.Client):
     def __init__(self, config: BotConfig) -> None:
         intents = discord.Intents.default()
         intents.message_content = True
-        super().__init__(intents=intents)
+        # Nội dung trả lời có thể chứa tiêu đề/nhãn lấy từ nguồn hoặc AI; không để chúng ping
+        # @everyone, vai trò hay người dùng.
+        super().__init__(intents=intents, allowed_mentions=discord.AllowedMentions.none())
         self.config = config
         self.allowlist = Allowlist(guild_ids=config.guild_ids, channel_ids=config.channel_ids)
         self.api = ResearchAPIClient(

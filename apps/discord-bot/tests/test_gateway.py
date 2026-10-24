@@ -359,3 +359,17 @@ class TestConfiguration:
         monkeypatch.setenv("DISCORD_AUTO_APPROVE_LINKS", "true")
 
         assert load_config().auto_approve_links is True
+
+
+
+def test_gateway_never_pings_from_source_derived_text(monkeypatch, tmp_path):
+    from app.bot import IntakeGatewayClient
+    from app.config import load_config
+
+    monkeypatch.setenv("SECRETS_DIR", str(tmp_path))
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "token")
+    monkeypatch.setenv("RESEARCH_API_TOKEN", "service-token")
+    monkeypatch.setenv("DISCORD_ALLOWED_GUILD_IDS", "guild-1")
+    monkeypatch.setenv("DISCORD_ALLOWED_CHANNEL_IDS", "channel-1")
+    mentions = IntakeGatewayClient(load_config()).allowed_mentions
+    assert not (mentions.everyone or mentions.roles or mentions.users or mentions.replied_user)

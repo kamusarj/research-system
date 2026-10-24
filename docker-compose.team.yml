@@ -33,9 +33,11 @@ services:
     environment:
       <<: *team-environment
       API_WORKERS: ${API_WORKERS:-2}
-      # API không mở cổng ra ngoài nên chỉ proxy nội bộ gửi được X-Forwarded-For; tin cậy nó để
-      # giới hạn đăng nhập tính theo IP thật của từng thành viên.
-      FORWARDED_ALLOW_IPS: "*"
+      # Chỉ tin X-Forwarded-For do proxy trong mạng Docker (Caddy/cloudflared/Next.js) thêm vào.
+      # Với "*" uvicorn lấy địa chỉ trái cùng — do trình duyệt tự đặt — nên kẻ dò mật khẩu đổi IP
+      # tùy ý để né giới hạn đăng nhập. Với dải mạng Docker, địa chỉ được lấy là địa chỉ ngoài
+      # cùng mà proxy của chính hệ thống đã nối thêm.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-172.16.0.0/12}
       AUTH_LOGIN_ATTEMPTS_PER_WINDOW: ${AUTH_LOGIN_ATTEMPTS_PER_WINDOW:-10}
       DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-4}
       DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-2}
