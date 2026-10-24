@@ -5,6 +5,7 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import timedelta
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import HTTPException
@@ -22,6 +23,7 @@ from app.schemas.ingestion import LinkClassification, LinkCreate, LinkReview, Tr
 from app.schemas.research import ResearchCreate
 from app.schemas.source import NormalizedSource, SourceEvidence
 from app.services.ai import PROVIDERS, provider
+from app.services.prompts import Source, injection_signals, task_prompt
 from app.services.research import create_research, get_research_or_404, transition
 from app.services.sources import adapter_for_url, normalize_url
 from app.services.sources.article import ArticleSourceAdapter, parsed_title
@@ -229,6 +231,24 @@ def _classification_payload(document: NormalizedSource) -> dict:
     }
 
 
+def auto_approval_allowed(item: LinkSubmission, final_url: str) -> bool:
+    """Tự duyệt dựa trên tín hiệu phía máy chủ, không chỉ điểm tin cậy do mô hình tự báo:
+    nội dung đọc được đầy đủ, không có dấu hiệu điều khiển mô hình, tên miền nằm trong danh
+    sách cho phép (nếu cấu hình)."""
+    classification = item.classification or {}
+    if not item.auto_approve or item.status != "completed":
+        return False
+    if classification.get("untrusted_signals"):
+        return False
+    allowed_domains = settings.auto_approve_domains
+    if allowed_domains:
+        host = (urlsplit(final_url).hostname or "").lower()
+        if not any(host == domain or host.endswith(f".{domain}") for domain in allowed_domains):
+            return False
+    confidence = float(classification.get("confidence", 0))
+    return confidence >= settings.intake_auto_approve_confidence
+
+
 def process_submission(db: Session, item: LinkSubmission) -> LinkSubmission:
     job_id = item.id
     try:
@@ -287,11 +307,20 @@ def process_submission(db: Session, item: LinkSubmission) -> LinkSubmission:
         if len(content.strip()) >= 80:
             _set_stage(db, item, "analyzing")
             runtime = provider(item.provider_name)
-            prompt = (
+            prompt = task_prompt(
                 "Classify this source for an AI-agents-for-business research knowledge base. "
-                "Return grounded structured JSON only. Do not invent technologies or relations.\n"
-                f"Source type: {document.source_type}\nURL: {final_url}\nTitle: {title}\n"
-                f"Content: {content[:30000]}"
+                "Return grounded structured JSON only. Do not invent technologies or relations.",
+                sources=[
+                    Source(
+                        content,
+                        attributes={
+                            "type": document.source_type,
+                            "url": final_url,
+                            "title": title,
+                        },
+                    )
+                ],
+                max_chars_per_source=30000,
             )
             with provider_observation(
                 provider=item.provider_name or settings.ai_provider,
@@ -303,6 +332,10 @@ def process_submission(db: Session, item: LinkSubmission) -> LinkSubmission:
             item.classification["normalized_source"] = document.model_dump(
                 mode="json", exclude={"raw_text"}
             )
+            signals = injection_signals(content[:30000])
+            if signals:
+                # Người duyệt thấy cảnh báo; tự duyệt bị chặn bên dưới.
+                item.classification["untrusted_signals"] = signals
             item.provider_name = item.provider_name or settings.ai_provider
             item.model_name = runtime.name
 
@@ -319,12 +352,7 @@ def process_submission(db: Session, item: LinkSubmission) -> LinkSubmission:
             "Intake job completed",
             extra={"job_id": job_id, "status": item.status, "source_type": document.source_type},
         )
-        confidence = float(item.classification.get("confidence", 0))
-        if (
-            item.auto_approve
-            and item.status == "completed"
-            and confidence >= settings.intake_auto_approve_confidence
-        ):
+        if auto_approval_allowed(item, final_url):
             approve_submission(db, item, LinkReview())
     except Exception as exc:
         db.rollback()

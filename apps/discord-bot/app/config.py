@@ -87,7 +87,7 @@ def load_config() -> BotConfig:
         guild_ids=_id_set(os.environ.get("DISCORD_ALLOWED_GUILD_IDS", "")),
         channel_ids=_id_set(os.environ.get("DISCORD_ALLOWED_CHANNEL_IDS", "")),
         provider=os.environ.get("DISCORD_INTAKE_PROVIDER") or None,
-        auto_approve_links=_boolean("DISCORD_AUTO_APPROVE_LINKS", True),
+        auto_approve_links=_boolean("DISCORD_AUTO_APPROVE_LINKS", False),
         # Sản phẩm chỉ hiển thị tiếng Việt; giữ trường này để tương thích cấu hình cũ.
         locale="vi",
         poll_interval_seconds=float(os.environ.get("DISCORD_POLL_INTERVAL_SECONDS", "5")),

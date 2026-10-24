@@ -1,5 +1,6 @@
 import json
 import os
+import re
 
 os.environ["DATABASE_URL"] = "sqlite://"
 os.environ["AI_PROVIDER"] = "mistral"
@@ -21,13 +22,22 @@ from app.services.ai_usage import set_recorder
 set_recorder(lambda _row: None)
 
 
+SOURCE_BLOCK = re.compile(r"<source([^>]*)>\n(.*?)\n</source>", re.S)
+
+
+def prompt_source(prompt: str) -> tuple[str, str]:
+    """Thuộc tính và nội dung của khối <source> đầu tiên theo bố cục `task_prompt`."""
+    match = SOURCE_BLOCK.search(prompt)
+    return (match.group(1), match.group(2)) if match else ("", prompt)
+
+
 class DeterministicTestProvider:
     name = "deterministic-test-provider"
     version = "test"
 
     def complete_json(self, prompt, schema):
         if schema.__name__ == "DocumentGraphResearchExtraction":
-            node_context = json.loads(prompt.split("NODES:\n", 1)[1])
+            node_context = json.loads(prompt_source(prompt)[1])
             return schema.model_validate(
                 {
                     "results": [
@@ -50,7 +60,7 @@ class DeterministicTestProvider:
                     ]
                 }
             )
-        content = prompt.rsplit("Content:", 1)[-1] if "Content:" in prompt else prompt
+        attributes, content = prompt_source(prompt)
         evidence_excerpt = " ".join(content.split())[:80] or "No readable source content"
         values = {
             "summary": " ".join(content.split())[:280] or "No readable source content",
@@ -64,9 +74,9 @@ class DeterministicTestProvider:
             "relations": [],
             "content_type": (
                 "repository"
-                if "Source type: github" in prompt
+                if 'type="github"' in attributes
                 else "paper"
-                if "Source type: paper" in prompt or "Source type: pdf" in prompt
+                if 'type="paper"' in attributes or 'type="pdf"' in attributes
                 else "article"
             ),
             "language": "en",

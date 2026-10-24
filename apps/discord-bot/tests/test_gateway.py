@@ -345,9 +345,10 @@ class TestConfiguration:
         assert config.discord_token == "token-from-file"
         assert config.configured is True
         assert config.channel_ids == frozenset({"channel-1", "channel-2"})
-        assert config.auto_approve_links is True
+        # Nội dung từ kênh chat là dữ liệu không tin cậy: tự duyệt phải được bật có chủ đích.
+        assert config.auto_approve_links is False
 
-    def test_guarded_auto_approval_setting_can_be_disabled(self, monkeypatch, tmp_path):
+    def test_guarded_auto_approval_setting_can_be_enabled(self, monkeypatch, tmp_path):
         from app.config import load_config
 
         monkeypatch.setenv("SECRETS_DIR", str(tmp_path))
@@ -355,6 +356,6 @@ class TestConfiguration:
         monkeypatch.setenv("RESEARCH_API_TOKEN", "service-token")
         monkeypatch.setenv("DISCORD_ALLOWED_GUILD_IDS", "guild-1")
         monkeypatch.setenv("DISCORD_ALLOWED_CHANNEL_IDS", "channel-1")
-        monkeypatch.setenv("DISCORD_AUTO_APPROVE_LINKS", "false")
+        monkeypatch.setenv("DISCORD_AUTO_APPROVE_LINKS", "true")
 
-        assert load_config().auto_approve_links is False
+        assert load_config().auto_approve_links is True

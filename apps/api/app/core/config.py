@@ -80,6 +80,8 @@ class Settings(BaseSettings):
     mistral_api_key: SecretStr | None = None
     mistral_model: str = "mistral-large-latest"
     ai_request_timeout: float = 120
+    # Trần token đầu ra cho tác vụ JSON có cấu trúc (chống tiêu thụ không giới hạn).
+    ai_max_output_tokens: int = Field(default=8192, ge=256, le=65536)
     # Cầu nối trên máy chủ chạy Claude Code/Codex/Antigravity bằng gói đăng nhập của chủ máy
     # (`app/ai_cli_bridge.py`). Để trống URL là tắt ba nhà cung cấp này.
     ai_cli_bridge_url: str = ""
@@ -91,6 +93,9 @@ class Settings(BaseSettings):
     codex_effort: Literal["low", "medium", "high", "xhigh", "max"] | None = "low"
     antigravity_model: str = "gemini-3.8-flash-medium"
     intake_auto_approve_confidence: float = 0.85
+    # Tự duyệt chỉ khi nguồn thuộc các tên miền này (và tên miền con); rỗng = không giới hạn.
+    # Nội dung có dấu hiệu prompt injection không bao giờ được tự duyệt.
+    intake_auto_approve_domains: str = ""
     intake_max_content_bytes: int = 2_000_000
     intake_max_pdf_bytes: int = 25_000_000
     intake_request_timeout_seconds: float = 20
@@ -243,6 +248,14 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.api_cors_origins.split(",") if origin.strip()]
+
+    @property
+    def auto_approve_domains(self) -> set[str]:
+        return {
+            domain.strip().lower().lstrip(".")
+            for domain in self.intake_auto_approve_domains.split(",")
+            if domain.strip()
+        }
 
     @property
     def trusted_hosts(self) -> set[str] | None:
