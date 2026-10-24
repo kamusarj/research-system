@@ -3,6 +3,7 @@ import os
 
 os.environ["DATABASE_URL"] = "sqlite://"
 os.environ["AI_PROVIDER"] = "mistral"
+os.environ["API_TRUSTED_HOSTS"] = "testserver"
 
 import pytest
 from fastapi.testclient import TestClient

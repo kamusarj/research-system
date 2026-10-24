@@ -11,6 +11,7 @@ x-app-environment: &app-environment
   DEPLOYMENT_ENVIRONMENT: ${DEPLOYMENT_ENVIRONMENT:-local}
   SECRET_FILES_DIR: ${SECRET_FILES_DIR:-/run/secrets}
   API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost:3000}
+  API_TRUSTED_HOSTS: ${API_TRUSTED_HOSTS:-}
   AI_PROVIDER: ${AI_PROVIDER:-mistral}
   OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
   OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}

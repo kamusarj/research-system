@@ -14,6 +14,7 @@ from app.core.auth import AuthMiddleware
 from app.core.config import settings
 from app.core.localization import product_error_message
 from app.core.observability import ObservabilityMiddleware, configure_logging
+from app.core.request_guard import RequestGuardMiddleware
 from app.core.runtime_controls import RuntimeControlsMiddleware
 from app.services.neo4j_projection import GraphProjectionError
 from app.services.object_storage import DocumentError
@@ -53,6 +54,7 @@ app.add_middleware(
 )
 app.add_middleware(RuntimeControlsMiddleware)
 app.add_middleware(AuthMiddleware)
+app.add_middleware(RequestGuardMiddleware)
 app.add_middleware(ObservabilityMiddleware)
 app.include_router(api_router, prefix="/api/v1")
 

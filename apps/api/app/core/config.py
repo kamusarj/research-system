@@ -1,9 +1,14 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Tên dịch vụ trong mạng Compose và địa chỉ loopback: trình duyệt của kẻ tấn công không thể khiến
+# nạn nhân gửi các Host này qua một tên miền do chúng kiểm soát.
+INTERNAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "api", "frontend"})
 
 
 class Settings(BaseSettings):
@@ -16,6 +21,9 @@ class Settings(BaseSettings):
     database_pool_timeout_seconds: float = Field(default=30, gt=0, le=300)
     database_pool_recycle_seconds: int = Field(default=1800, ge=60, le=86_400)
     api_cors_origins: str = "http://localhost:3000"
+    # Tên máy được chấp nhận ở header Host/X-Forwarded-Host, ngoài tên nội bộ và host của
+    # API_CORS_ORIGINS. Danh sách phân cách bằng dấu phẩy; "*" tắt kiểm tra (không khuyến nghị).
+    api_trusted_hosts: str = ""
     ai_provider: str = "mistral"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2"
@@ -235,6 +243,15 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.api_cors_origins.split(",") if origin.strip()]
+
+    @property
+    def trusted_hosts(self) -> set[str] | None:
+        """None nghĩa là tắt kiểm tra host."""
+        extra = {host.strip().lower() for host in self.api_trusted_hosts.split(",") if host.strip()}
+        if "*" in extra:
+            return None
+        origin_hosts = {urlsplit(origin).hostname or "" for origin in self.cors_origins}
+        return (INTERNAL_HOSTS | extra | origin_hosts) - {""}
 
     @property
     def metrics_secret(self) -> str | None:
