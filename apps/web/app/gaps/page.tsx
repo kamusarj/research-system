@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { StatusBadge } from "@/components/status-badge";
@@ -17,6 +18,26 @@ export default function GapsPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
   const query = useQuery({ queryKey: ["knowledge-gaps"], queryFn: () => api<Gap[]>("/gaps") });
+  const router = useRouter();
+  const features = useQuery({
+    queryKey: ["system-features"],
+    queryFn: () => api<{ research_agent?: boolean }>("/system/features"),
+    staleTime: 60_000,
+  });
+  const researchAgent = features.data?.research_agent === true;
+
+  // Khi pipeline nghiên cứu sâu bật: chạy tìm nguồn + kiểm chứng thật và mở màn theo dõi tiến độ.
+  async function startResearch(gap: Gap) {
+    setBusy(gap.id);
+    setError("");
+    try {
+      const run = await api<{ id: string }>(`/gaps/${gap.id}/research-run`, { method: "POST" });
+      router.push(`/research/runs/${run.id}`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : t("unableSave"));
+      setBusy(null);
+    }
+  }
 
   async function run(path: string, id: string, body?: object) {
     setBusy(id);
@@ -53,7 +74,9 @@ export default function GapsPage() {
               <p className="muted">{t("concept")}: {gap.concept_key} · {t("approvedCoverage")}: {gap.coverage_count} · {t("owner")}: {gap.assigned_to ?? t("unassigned")}</p>
               <div className="actions">
                 {can("researcher") && !gap.assigned_to && !closed && <button disabled={busy === gap.id} onClick={() => run(`/gaps/${gap.id}/assign`, gap.id, { assigned_to: assignee })}>{t("assign")}</button>}
-                {can("researcher") && !gap.deep_research_id && !closed && <button disabled={busy === gap.id} onClick={() => run(`/gaps/${gap.id}/request-deep-research`, gap.id)}>{t("createDeepDraft")}</button>}
+                {can("researcher") && !gap.deep_research_id && !closed && (researchAgent
+                  ? <button disabled={busy === gap.id} onClick={() => void startResearch(gap)}>Nghiên cứu sâu có trích dẫn</button>
+                  : <button disabled={busy === gap.id} onClick={() => run(`/gaps/${gap.id}/request-deep-research`, gap.id)}>{t("createDeepDraft")}</button>)}
                 {gap.deep_research_id && <Link className="button-link" href={`/research/${gap.deep_research_id}`}>{t("openResearch")}</Link>}
                 {can("researcher") && !closed && <button className="secondary" disabled={busy === gap.id} onClick={() => run(`/gaps/${gap.id}/dismiss`, gap.id, { reason: "Đã bỏ qua trong không gian nghiên cứu" })}>{t("dismiss")}</button>}
               </div>

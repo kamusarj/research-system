@@ -11,6 +11,7 @@ import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
 import type { Research } from "@/lib/types";
+import { ReportMarkdown } from "@/components/report-markdown";
 
 export default function ResearchDetail() {
   const { t } = useI18n();
@@ -63,7 +64,7 @@ export default function ResearchDetail() {
           <article className="card prose research-content">
             <div className="section-heading compact"><div><p className="eyebrow">{t("content")}</p><h2>{t("summary")}</h2></div></div>
             {item.summary && <p className="research-summary">{item.summary}</p>}
-            <pre>{item.content}</pre>
+            <ReportMarkdown content={item.content} />
             {item.source_url && <a className="source-link original-source" href={item.source_url} target="_blank" rel="noreferrer">{t("openOriginalSource")} ↗</a>}
           </article>
           {can("researcher") && <AIPanel researchId={item.id} onAccepted={() => query.refetch()} />}

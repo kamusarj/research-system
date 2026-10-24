@@ -28,7 +28,7 @@ export function isAllowedChatImageUrl(value: unknown): value is string {
   }
 }
 
-function isSafeLink(value: string | undefined): value is string {
+export function isSafeLink(value: string | undefined): value is string {
   if (!value) return false;
   if (value.startsWith("/") && !value.startsWith("//")) return true;
   try {

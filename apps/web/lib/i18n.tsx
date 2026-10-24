@@ -6,7 +6,7 @@ export type Locale = "en" | "vi";
 
 const messages: Record<Locale, Record<string, string>> = {
   en: {
-    workspaceLabel: "Research workspace", operations: "Operations", navLibrary: "Research workflow", navIntelligence: "Knowledge tools", systemReady: "System ready", searchWorkspace: "Search library", skipToContent: "Skip to content",
+    workspaceLabel: "Research workspace", deepResearchNav: "Deep research", operations: "Operations", navLibrary: "Research workflow", navIntelligence: "Knowledge tools", systemReady: "System ready", searchWorkspace: "Search library", skipToContent: "Skip to content",
     researchSystemHome: "Research System home",
     signIn: "Sign in", signInIntro: "Use your Research System account to continue.", email: "Email", password: "Password", signingIn: "Signing in…", signInFailed: "Sign in failed", signOut: "Sign out", signedInAs: "Signed in as", authUnavailable: "Authentication unavailable", roleOwner: "Owner", roleResearcher: "Researcher", roleViewer: "Viewer",
     dashboardTitle: "Research overview", dashboardIntro: "Collect, extract, review and connect trustworthy research in one focused workspace.",
@@ -133,7 +133,7 @@ const messages: Record<Locale, Record<string, string>> = {
     "status.draft": "draft", "status.active": "active", "status.closed": "closed", "status.uploaded": "uploaded", "status.in-review": "in review", "status.approved": "approved", "status.applied": "applied", "status.archived": "archived", "status.rejected": "rejected", "status.accepted": "accepted", "status.valid": "valid", "status.warning": "warning", "status.error": "error", "status.skipped": "skipped", "status.detected": "detected", "status.dismissed": "dismissed", "status.filled": "filled", "status.assigned": "assigned", "status.prioritized": "prioritized", "status.snoozed": "snoozed", "status.deep-research-requested": "research requested",
   },
   vi: {
-    workspaceLabel: "Không gian nghiên cứu", operations: "Vận hành", navLibrary: "Quy trình nghiên cứu", navIntelligence: "Phân tích và tri thức", systemReady: "Hệ thống sẵn sàng", searchWorkspace: "Tìm trong thư viện", skipToContent: "Đi tới nội dung chính",
+    workspaceLabel: "Không gian nghiên cứu", deepResearchNav: "Nghiên cứu sâu", operations: "Vận hành", navLibrary: "Quy trình nghiên cứu", navIntelligence: "Phân tích và tri thức", systemReady: "Hệ thống sẵn sàng", searchWorkspace: "Tìm trong thư viện", skipToContent: "Đi tới nội dung chính",
     researchSystemHome: "Trang chủ Research System",
     signIn: "Đăng nhập", signInIntro: "Dùng tài khoản Research System để tiếp tục.", email: "Email", password: "Mật khẩu", signingIn: "Đang đăng nhập…", signInFailed: "Đăng nhập thất bại", signOut: "Đăng xuất", signedInAs: "Đang đăng nhập", authUnavailable: "Dịch vụ xác thực chưa sẵn sàng", roleOwner: "Chủ sở hữu", roleResearcher: "Nhà nghiên cứu", roleViewer: "Người xem",
     dashboardTitle: "Tổng quan nghiên cứu", dashboardIntro: "Thu thập, trích xuất, kiểm duyệt và kết nối nghiên cứu đáng tin cậy trong một workspace tập trung.",
