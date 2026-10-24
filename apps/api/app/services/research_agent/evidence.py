@@ -51,11 +51,26 @@ def numbers_in(text: str) -> set[str]:
     return {re.sub(r"[.,]", "", value) for value in _DIGITS.findall(text)}
 
 
+# Từ phủ định: khớp gần đúng không được phép khác nhau ở những từ này (đảo nghĩa câu).
+NEGATIONS = frozenset(
+    "not no never none without cannot can't don't doesn't isn't aren't won't "
+    "không chưa chẳng chả đừng".split()
+)
+MIN_QUOTE_TOKENS = 6
+
+
+def raw_numbers(text: str) -> list[str]:
+    """Con số giữ nguyên dấu phân cách (1.5 khác 15) để so trích dẫn với nguồn cùng ngôn ngữ."""
+    return _DIGITS.findall(text)
+
+
 def match_quote(quote: str, text: str, *, min_fuzzy_tokens: int = 8) -> QuoteMatch | None:
     quote = " ".join(quote.split())
     if not quote or not text:
         return None
-    exact = re.search(r"\s+".join(re.escape(part) for part in quote.split()), text)
+    # Ranh giới từ ở hai đầu: trích dẫn "20" không được khớp vào giữa "2025".
+    pattern = r"(?<!\w)" + r"\s+".join(re.escape(part) for part in quote.split()) + r"(?!\w)"
+    exact = re.search(pattern, text)
     if exact:
         return QuoteMatch(exact.start(), exact.end(), "exact", 1.0)
 
@@ -75,22 +90,41 @@ def match_quote(quote: str, text: str, *, min_fuzzy_tokens: int = 8) -> QuoteMat
     if size < min_fuzzy_tokens:
         return None
     anchors = {tuple(quote_tokens[offset : offset + 3]) for offset in range(size - 2)}
+    slack = max(2, size // 5)
     best: tuple[float, int, int] | None = None
     for index in range(len(words) - 2):
         if tuple(words[index : index + 3]) not in anchors:
             continue
         for start in range(max(0, index - size), index + 1):
-            window = words[start : start + size + 2]
-            score = SequenceMatcher(None, quote_tokens, window, autojunk=False).ratio()
-            if best is None or score > best[0]:
-                best = (score, start, min(len(words), start + size + 2) - 1)
+            for length in range(max(1, size - slack), size + slack + 1):
+                window = words[start : start + length]
+                matcher = SequenceMatcher(None, quote_tokens, window, autojunk=False)
+                score = matcher.ratio()
+                if best is not None and score <= best[0]:
+                    continue
+                if not _differences_are_harmless(matcher, quote_tokens, window):
+                    continue
+                best = (score, start, min(len(words), start + length) - 1)
     if best is None or best[0] < 0.9:
         return None
     score, start_token, end_token = best
     start, end = text_tokens[start_token][1], text_tokens[end_token][2]
-    if not numbers_in(quote) <= numbers_in(text[start:end]):
+    if not set(raw_numbers(quote)) <= set(raw_numbers(text[start:end])):
         return None
     return QuoteMatch(start, end, "fuzzy", round(score, 3))
+
+
+def _differences_are_harmless(
+    matcher: SequenceMatcher, quote_tokens: list[str], window: list[str]
+) -> bool:
+    """Khác biệt chỉ được là từ thường; không được đụng tới phủ định hay con số."""
+    for tag, a_start, a_end, b_start, b_end in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        changed = quote_tokens[a_start:a_end] + window[b_start:b_end]
+        if any(token in NEGATIONS or any(ch.isdigit() for ch in token) for token in changed):
+            return False
+    return True
 
 
 def unsupported_numbers(claim: str, evidence: str) -> set[str]:

@@ -106,7 +106,14 @@ class InternalKnowledgeProvider:
             return []
         items = list(
             self.db.scalars(
-                select(ResearchItem).where(ResearchItem.status == "approved").limit(500)
+                select(ResearchItem)
+                .where(
+                    ResearchItem.status == "approved",
+                    # Báo cáo do chính pipeline viết không được trích dẫn lại như nguồn gốc.
+                    ResearchItem.type != "deep-research-report",
+                )
+                .order_by(ResearchItem.updated_at.desc())
+                .limit(500)
             )
         )
         scored = []
@@ -181,26 +188,6 @@ def cache_put(db: Session, key: str, kind: str, payload: dict[str, Any], hours: 
 def purge_expired_cache(db: Session) -> int:
     result = db.execute(delete(ResearchWebCache).where(ResearchWebCache.expires_at <= utcnow()))
     return result.rowcount or 0
-
-
-def cached_search(
-    db: Session, provider: SearchProvider, query: str, *, limit: int, use_cache: bool
-) -> tuple[list[SearchHit], bool]:
-    if provider.name == "internal_kb" or not use_cache:
-        return provider.search(query, limit=limit), False
-    key = cache_key("search", provider.name, normalized_query(query), settings.searxng_engines)
-    cached = cache_get(db, key)
-    if cached is not None:
-        return [SearchHit(**hit) for hit in cached.get("hits", [])][:limit], True
-    hits = provider.search(query, limit=limit)
-    cache_put(
-        db,
-        key,
-        "search",
-        {"hits": [hit.__dict__ for hit in hits]},
-        settings.research_search_cache_hours,
-    )
-    return hits, False
 
 
 # --- Khử trùng --------------------------------------------------------------------------------

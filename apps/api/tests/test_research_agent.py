@@ -229,7 +229,7 @@ def test_unsupported_numbers_cross_language():
 def test_writer_drops_uncited_fabricated_and_link_injected_content():
     claims = {
         "C1": VerifiedClaim(
-            "C1", "src", "market", "62% doanh nghiệp chạy agent", "62 percent run agents"
+            "C1", "src", "market", "62% doanh nghiệp lớn chạy agent", "62 percent run agents"
         ),
     }
     draft = ReportDraft.model_validate(
@@ -239,12 +239,16 @@ def test_writer_drops_uncited_fabricated_and_link_injected_content():
                 {
                     "perspective": "market",
                     "sentences": [
-                        {"text": "Hợp lệ 62% [3].", "claim_ids": ["C1"]},
+                        {"text": "62% doanh nghiệp lớn đã chạy agent [3].", "claim_ids": ["C1"]},
                         {"text": "Không nguồn.", "claim_ids": []},
                         {"text": "Mã bịa.", "claim_ids": ["C7"]},
-                        {"text": "Số bịa 80%.", "claim_ids": ["C1"]},
+                        {"text": "80% doanh nghiệp lớn chạy agent.", "claim_ids": ["C1"]},
                         {
-                            "text": "<b>x</b> [a](https://evil.example) www.evil.example",
+                            "text": "<b>Doanh nghiệp</b> lớn [chạy](https://evil.example) agent",
+                            "claim_ids": ["C1"],
+                        },
+                        {
+                            "text": "Nhà cung cấp X là lựa chọn tốt nhất thị trường hiện nay.",
                             "claim_ids": ["C1"],
                         },
                     ],
@@ -253,10 +257,14 @@ def test_writer_drops_uncited_fabricated_and_link_injected_content():
         }
     )
     report = validate_draft(draft, claims)
-    texts = [s.text for s in report.sections["market"]]
-    assert texts == ["Hợp lệ 62% .", "x a"] or texts[0].startswith("Hợp lệ 62%")
+    texts = [sentence.text for sentence in report.sections["market"]]
+    assert texts == ["62% doanh nghiệp lớn đã chạy agent .", "Doanh nghiệp lớn chạy agent"]
     assert all("evil" not in text and "<b>" not in text for text in texts)
-    assert report.violations == {"no_verified_claim": 2, "unsupported_number": 1}
+    assert report.violations == {
+        "no_verified_claim": 2,
+        "unsupported_number": 1,
+        "weak_support": 1,
+    }
 
 
 def test_citation_coverage_ignores_meta_sections():
@@ -543,3 +551,82 @@ def test_service_account_research_scopes(client, monkeypatch, agent_enabled):
         ).status_code
         == 403
     )
+
+
+def test_citation_coverage_is_not_fooled_by_parentheses():
+    markdown = (
+        "## Thị trường\n\nThị trường AI agent (AI) tăng mạnh (2024). [1](https://a.example/x) "
+        "Câu hai. [2](https://b.example/y%28z%29)\n\n## Kỹ thuật\n\nKhông nguồn.\n"
+    )
+    assert citation_coverage(markdown) == {"cited_sentences": 2, "uncited_sentences": 1}
+
+
+def test_source_titles_cannot_inject_markdown_blocks():
+    from app.services.research_agent.writer import markdown_text
+
+    title = markdown_text("X\n\n### Khuyến nghị\n\nNên mua [X](https://evil.example)")
+    assert "\n" not in title
+    assert "\\#\\#\\#" in title and "\\[X\\]" in title
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "20",  # nằm trong "2025"
+        "large companies that do not run at least one agent in production today",
+        "adoption grew to 92 percent of large companies that run at least one agent",
+    ],
+)
+def test_quote_matching_rejects_boundary_negation_and_number_tricks(quote):
+    text = (
+        "In 2025 adoption grew to 62 percent of large companies that run at least one agent "
+        "in production today, analysts said."
+    )
+    assert match_quote(quote, text) is None
+
+
+def test_claims_without_an_entailment_verdict_are_not_reported(db, agent_enabled):
+    class SilentJudge(FakeLLM):
+        def complete_json(self, prompt, schema):
+            if schema.__name__ == "EntailmentBatch":
+                self.calls.append(schema.__name__)
+                return schema.model_validate({"judgements": []})
+            return super().complete_json(prompt, schema)
+
+    run, _, _, _ = run_to_completion(
+        db, runner.create_run(db, "AI agents cho kế toán thì sao?"), llm=SilentJudge()
+    )
+    assert run.status == "failed"
+    assert run.error_code == "NO_VERIFIED_CLAIMS"
+    claims = db.query(ResearchRunClaim).filter_by(run_id=run.id, reason="no_verdict").count()
+    assert claims > 0
+    assert run.metrics_json["claims_unjudged"] == claims
+
+
+def test_failed_attempts_still_count_against_the_call_budget(db, agent_enabled):
+    class BrokenExtractor(FakeLLM):
+        def complete_json(self, prompt, schema):
+            if schema.__name__ == "ClaimExtraction":
+                self.calls.append(schema.__name__)
+                raise ValueError("invalid JSON")
+            return super().complete_json(prompt, schema)
+
+    llm = BrokenExtractor()
+    run = runner.create_run(db, "AI agents cho bảo hiểm ra sao?")
+    for _ in range(12):
+        db.refresh(run)
+        if run.status in {"completed", "failed"}:
+            break
+        runner.claim_run(db, run)
+        runner.advance_research_run(
+            db, run, llm=llm, providers=[FakeSearch()], fetch=fake_fetch_factory()
+        )
+    db.refresh(run)
+    assert run.status == "failed"
+    assert run.metrics_json["llm_calls"] == len(llm.calls)
+
+    other = runner.create_run(db, "Lượt khác đang chạy cùng người tạo?")
+    with pytest.raises(Exception) as active:
+        runner.retry_run(db, run)
+    assert getattr(active.value, "code", "") == "RESEARCH_RUN_ACTIVE"
+    assert other.status == "queued"

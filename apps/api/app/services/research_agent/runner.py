@@ -39,7 +39,11 @@ from app.services.ingestion import fetch_url
 from app.services.object_storage import DocumentError
 from app.services.prompts import Source, injection_signals, sanitize_untrusted, task_prompt
 from app.services.research import create_research
-from app.services.research_agent.evidence import match_quote, unsupported_numbers
+from app.services.research_agent.evidence import (
+    MIN_QUOTE_TOKENS,
+    match_quote,
+    unsupported_numbers,
+)
 from app.services.research_agent.schemas import (
     PERSPECTIVE_LABELS,
     PERSPECTIVES,
@@ -59,6 +63,7 @@ from app.services.research_agent.search import (
     near_duplicate,
     normalized_query,
     providers_from_settings,
+    purge_expired_cache,
     registrable_domain,
     run_parallel,
     simhash,
@@ -109,6 +114,8 @@ VARIANTS: dict[str, dict[str, bool]] = {
     },
 }
 MIN_SOURCE_CHARS = 400
+# Lượt chạy do lệnh eval tạo: worker không nhận, để eval tự điều khiển từng bước và đo thời gian.
+EVAL_ACTOR = "research-eval"
 FALLBACK_QUERY_SUFFIX = {
     "market": "market size adoption 2026",
     "use_case": "use cases case study",
@@ -192,6 +199,8 @@ class RunContext:
     fetch: Callable[[str], FetchedPage]
     flags: dict[str, bool]
     metrics: dict[str, Any] = field(default_factory=dict)
+    # Eval đặt "muối" riêng cho mỗi lần chạy để cache của biến thể này không phục vụ biến thể kia.
+    salt: str = ""
 
     def bump(self, key: str, amount: int = 1) -> None:
         self.metrics[key] = int(self.metrics.get(key, 0)) + amount
@@ -278,6 +287,18 @@ def request_cancel(db: Session, run: ResearchRun) -> ResearchRun:
 def retry_run(db: Session, run: ResearchRun) -> ResearchRun:
     if run.status != "failed":
         raise DocumentError("RESEARCH_RUN_STATE", "Chỉ thử lại được lượt đã thất bại", 409)
+    active = db.scalar(
+        select(func.count())
+        .select_from(ResearchRun)
+        .where(
+            ResearchRun.created_by == run.created_by,
+            ResearchRun.status.in_(("queued", "running")),
+        )
+    )
+    if active:
+        raise DocumentError(
+            "RESEARCH_RUN_ACTIVE", "Bạn đang có một lượt nghiên cứu chưa hoàn tất", 409
+        )
     run.status = "queued"
     run.attempt_count = 0
     run.error_code = None
@@ -315,7 +336,7 @@ def claim_next_research_run(db: Session) -> ResearchRun | None:
     )
     run = db.scalar(
         select(ResearchRun)
-        .where(or_(ready, expired))
+        .where(or_(ready, expired), ResearchRun.created_by != EVAL_ACTOR)
         .order_by(ResearchRun.created_at)
         .with_for_update(skip_locked=True)
         .limit(1)
@@ -323,6 +344,12 @@ def claim_next_research_run(db: Session) -> ResearchRun | None:
     if run is None:
         db.commit()
         return None
+    return claim_run(db, run)
+
+
+def claim_run(db: Session, run: ResearchRun) -> ResearchRun:
+    """Nhận một bước để chạy: đánh dấu đang chạy, tăng số lần thử, đặt lease."""
+    now = utcnow()
     run.status = "running"
     run.attempt_count += 1
     run.started_at = run.started_at or now
@@ -332,9 +359,18 @@ def claim_next_research_run(db: Session) -> ResearchRun | None:
     return run
 
 
+_last_cache_purge = 0.0
+
+
 def run_pending_research_steps(db: Session, max_steps: int = 1) -> int:
+    global _last_cache_purge
     if not settings.research_agent_enabled:
         return 0
+    if time.monotonic() - _last_cache_purge > 3600:
+        # Cache web có hạn dùng; dọn mỗi giờ để bảng không phình mãi.
+        _last_cache_purge = time.monotonic()
+        purge_expired_cache(db)
+        db.commit()
     processed = 0
     while processed < max_steps:
         run = claim_next_research_run(db)
@@ -366,6 +402,7 @@ def advance_research_run(
         fetch=fetch or default_fetch,
         flags={**VARIANTS["optimized"], **(run.config_json or {})},
         metrics=dict(run.metrics_json or {}),
+        salt=str((run.config_json or {}).get("cache_salt") or ""),
     )
     run.model_name = getattr(ctx.llm, "name", None)
     stage = run.stage
@@ -376,6 +413,7 @@ def advance_research_run(
         db.rollback()
         run = db.get(ResearchRun, run.id)
         code = getattr(exc, "code", None) or type(exc).__name__
+        _keep_counters(run, ctx)
         if run.attempt_count >= settings.research_max_attempts:
             _fail(db, run, code, "Bước này lỗi lặp lại; kết quả đã có vẫn được giữ.")
         else:
@@ -388,12 +426,14 @@ def advance_research_run(
     except StageFailed as exc:
         db.rollback()
         run = db.get(ResearchRun, run.id)
+        _keep_counters(run, ctx)
         _fail(db, run, exc.code, str(exc))
         db.commit()
         return run
     except Exception as exc:  # noqa: BLE001 - lỗi bất ngờ: dừng lượt chạy, không treo hàng đợi
         db.rollback()
         run = db.get(ResearchRun, run.id)
+        _keep_counters(run, ctx)
         logger.error(
             "Research run stage failed",
             extra={
@@ -424,6 +464,11 @@ def advance_research_run(
     db.commit()
     db.refresh(run)
     return run
+
+
+def _keep_counters(run: ResearchRun, ctx: "RunContext") -> None:
+    """Lượt gọi AI và token của bước lỗi vẫn được tính vào ngân sách (rollback không xóa)."""
+    run.metrics_json = {**(run.metrics_json or {}), **ctx.metrics}
 
 
 def _finish(db: Session, run: ResearchRun, status: str) -> None:
@@ -461,9 +506,11 @@ def _heartbeat(ctx: RunContext) -> None:
 # --- Gọi mô hình (có cache theo nội dung prompt) ------------------------------------------------
 
 
-def _input_hash(stage: str, model: str, schema: type[BaseModel], prompt: str) -> str:
+def _input_hash(
+    stage: str, model: str, schema: type[BaseModel], prompt: str, salt: str = ""
+) -> str:
     material = json.dumps(
-        [stage, PROMPT_VERSIONS[stage], model, schema.__name__, prompt], ensure_ascii=False
+        [stage, PROMPT_VERSIONS[stage], model, schema.__name__, prompt, salt], ensure_ascii=False
     )
     return hashlib.sha256(material.encode()).hexdigest()
 
@@ -473,7 +520,7 @@ def _llm_many(
 ) -> list[tuple[BaseModel | None, BaseException | None]]:
     model = str(getattr(ctx.llm, "name", "unknown"))
     task = f"research-agent.{stage}"
-    hashes = [_input_hash(stage, model, schema, prompt) for prompt in prompts]
+    hashes = [_input_hash(stage, model, schema, prompt, ctx.salt) for prompt in prompts]
     results: list[tuple[BaseModel | None, BaseException | None]] = [(None, None)] * len(prompts)
     pending: list[int] = []
     for index, input_hash in enumerate(hashes):
@@ -517,17 +564,18 @@ def _llm_many(
         ctx.bump("cached_input_tokens", int(usage.get("cached_input_tokens") or 0))
         ctx.bump("total_tokens", int(usage.get("total_tokens") or 0))
         ctx.bump("prompt_chars", len(prompts[index]))
-        ctx.db.add(
-            AIOutput(
-                task=task,
-                model_name=model,
-                model_version=str(getattr(ctx.llm, "version", "")),
-                prompt_version=PROMPT_VERSIONS[stage],
-                input_hash=hashes[index],
-                output_json=output.model_dump(mode="json"),
-                confidence=0,
+        if ctx.flags.get("llm_cache"):
+            ctx.db.add(
+                AIOutput(
+                    task=task,
+                    model_name=model,
+                    model_version=str(getattr(ctx.llm, "version", "")),
+                    prompt_version=PROMPT_VERSIONS[stage],
+                    input_hash=hashes[index],
+                    output_json=output.model_dump(mode="json"),
+                    confidence=0,
+                )
             )
-        )
         results[index] = (output, None)
     return results
 
@@ -622,7 +670,11 @@ def stage_searching(ctx: RunContext) -> str:
     for provider_ in ctx.providers:
         for item in plan:
             key = cache_key(
-                "search", provider_.name, normalized_query(item["query"]), settings.searxng_engines
+                "search",
+                provider_.name,
+                normalized_query(item["query"]),
+                settings.searxng_engines,
+                ctx.salt,
             )
             if provider_.name == "internal_kb":
                 hits_by_query[(provider_.name, item["query"])] = provider_.search(
@@ -716,7 +768,7 @@ def stage_searching(ctx: RunContext) -> str:
                 url=candidate["url"],
                 canonical_url=candidate["url"][:2000],
                 domain=candidate["domain"][:255],
-                title=hit.title[:500],
+                title=" ".join(hit.title.split())[:500],
                 snippet=hit.snippet,
                 content_text=text,
                 research_item_id=hit.research_item_id,
@@ -747,7 +799,7 @@ def stage_fetching(ctx: RunContext) -> str:
     for source in sources:
         if source.status != "discovered":
             continue
-        key = cache_key("fetch", source.canonical_url)
+        key = cache_key("fetch", source.canonical_url, ctx.salt)
         cached = cache_get(ctx.db, key) if ctx.flags.get("web_cache") else None
         if cached is not None:
             ctx.bump("fetch_cache_hits")
@@ -817,7 +869,7 @@ def _apply_fetch(source: ResearchRunSource, payload: dict[str, Any]) -> None:
         source.status = "failed"
         source.error_code = payload["error_code"]
         return
-    source.title = (payload.get("title") or source.title)[:500]
+    source.title = " ".join((payload.get("title") or source.title).split())[:500]
     source.content_text = payload.get("text") or ""
     source.status = "ready" if len(source.content_text) >= MIN_SOURCE_CHARS else "unusable"
 
@@ -963,7 +1015,7 @@ def _check_claim(
     match = match_quote(quote, source.content_text)
     if match is None:
         claim.status, claim.reason = "rejected", "quote_not_found"
-    elif len(quote.split()) < 6 and not any(ch.isdigit() for ch in quote):
+    elif len(quote.split()) < MIN_QUOTE_TOKENS:
         claim.status, claim.reason = "rejected", "quote_too_short"
     elif unsupported_numbers(text, quote):
         claim.status, claim.reason = "rejected", "number_not_in_quote"
@@ -998,16 +1050,18 @@ def stage_verifying(ctx: RunContext) -> str:
         )
     }
     batches = [claims[index : index + 20] for index in range(0, len(claims), 20)]
+    # Mã ngắn trong mỗi lô: mô hình chép lại UUID hay sai, khiến nhận định mất phán quyết.
+    aliases = [{f"C{n}": claim for n, claim in enumerate(batch, start=1)} for batch in batches]
     prompts = []
-    for batch in batches:
+    for batch_aliases in aliases:
         lines = []
-        for claim in batch:
+        for alias, claim in batch_aliases.items():
             text = sources[claim.source_id].content_text
             start = max(0, (claim.start_offset or 0) - 200)
             end = min(len(text), (claim.end_offset or 0) + 200)
             lines.append(
                 json.dumps(
-                    {"claim_id": claim.id, "claim": claim.text, "evidence": text[start:end]},
+                    {"claim_id": alias, "claim": claim.text, "evidence": text[start:end]},
                     ensure_ascii=False,
                 )
             )
@@ -1024,15 +1078,15 @@ def stage_verifying(ctx: RunContext) -> str:
             "Đạt giới hạn lượt gọi AI; chỉ dùng kiểm chứng trích dẫn.",
         )
     verified = 0
-    for batch, (judged, error) in zip(batches, outcomes, strict=True):
+    unjudged = 0
+    for batch_aliases, (judged, error) in zip(aliases, outcomes, strict=True):
         verdicts = {} if error is not None else {j.claim_id: j.verdict for j in judged.judgements}
-        for claim in batch:
-            verdict = verdicts.get(claim.id)
-            source = sources[claim.source_id]
+        for alias, claim in batch_aliases.items():
+            verdict = verdicts.get(alias)
             if verdict is None:
-                # Không có phán quyết: giữ nhận định đã khớp nguyên văn, trừ nguồn đáng ngờ.
-                claim.entailment = "skipped"
-                claim.status = "flagged" if source.suspicious else "verified"
+                # Không có phán quyết (lỗi, hết ngân sách, mô hình bỏ sót): không coi là đạt.
+                claim.entailment, claim.status, claim.reason = "skipped", "flagged", "no_verdict"
+                unjudged += 1
             elif verdict == "supported":
                 claim.entailment, claim.status = "supported", "verified"
             elif verdict == "partial":
@@ -1050,12 +1104,14 @@ def stage_verifying(ctx: RunContext) -> str:
                 ctx.bump("claims_rejected")
             verified += claim.status == "verified"
     ctx.metrics["claims_verified"] = verified
+    ctx.metrics["claims_unjudged"] = unjudged
     _emit(
         ctx.db,
         ctx.run,
-        "progress",
+        "progress" if not unjudged else "warning",
         "verifying",
-        f"{verified}/{len(claims)} nhận định qua kiểm chứng.",
+        f"{verified}/{len(claims)} nhận định qua kiểm chứng"
+        + (f"; {unjudged} chưa được kiểm tra suy luận nên không dùng." if unjudged else "."),
     )
     return "writing"
 
@@ -1146,6 +1202,16 @@ def stage_writing(ctx: RunContext) -> str:
             f"{metrics.get('claims_rejected', 0)} bị loại"
         ),
         "Mô hình": f"{ctx.run.provider_name} / {ctx.run.model_name}",
+        "Kiểm tra suy luận": (
+            "bật"
+            if ctx.flags.get("entailment") and settings.research_entailment_enabled
+            else "tắt (chỉ khớp trích dẫn nguyên văn)"
+        )
+        + (
+            f"; {metrics.get('claims_unjudged')} nhận định chưa được kiểm tra nên bị loại"
+            if metrics.get("claims_unjudged")
+            else ""
+        ),
         "Phiên bản prompt": ", ".join(PROMPT_VERSIONS.values()),
     }
     markdown = render_markdown(
@@ -1157,6 +1223,8 @@ def stage_writing(ctx: RunContext) -> str:
         method=method,
     )
     coverage = citation_coverage(markdown)
+    # Ghi số đo trước khi kiểm tra cứng để eval vẫn thấy độ phủ của lượt bị từ chối.
+    ctx.metrics.update(coverage)
     if coverage["uncited_sentences"]:
         raise StageFailed("CITATION_INVARIANT", "Báo cáo có câu không kèm nguồn.")
     covered = sorted({p for p in report.sections if p != "summary"})

@@ -20,7 +20,7 @@ from app.services.research_agent.schemas import (
 _LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 _URL = re.compile(r"https?://\S+|www\.\S+", re.I)
 _HTML = re.compile(r"<[^>]+>")
-_CITATION = re.compile(r"\[\d+\]\((?:https?://|/research/)[^)]+\)")
+_CITATION_GROUP = re.compile(r"(?:\s*\[\d+\]\((?:https?://|/research/)[^)\s]*\))+")
 META_HEADINGS = ("Khoảng trống bằng chứng", "Nguồn", "Phương pháp")
 
 
@@ -68,6 +68,19 @@ def _clean(text: str) -> str:
     return " ".join(text.split())
 
 
+MIN_SUPPORT_RATIO = 0.3
+_CONTENT_WORD = re.compile(r"\w{3,}", re.UNICODE)
+
+
+def support_ratio(text: str, evidence: str) -> float:
+    """Tỉ lệ từ nội dung (≥3 ký tự) của câu có trong nhận định/trích dẫn được dẫn."""
+    words = {word.casefold() for word in _CONTENT_WORD.findall(text)}
+    if not words:
+        return 0.0
+    available = {word.casefold() for word in _CONTENT_WORD.findall(evidence)}
+    return len(words & available) / len(words)
+
+
 def validate_draft(draft: ReportDraft, claims: dict[str, VerifiedClaim]) -> ValidatedReport:
     report = ValidatedReport(title=_clean(draft.title)[:200] or "Báo cáo nghiên cứu", sections={})
     violations: dict[str, int] = {}
@@ -87,6 +100,10 @@ def validate_draft(draft: ReportDraft, claims: dict[str, VerifiedClaim]) -> Vali
             evidence = " ".join(f"{claims[i].text} {claims[i].quote}" for i in valid_ids)
             if unsupported_numbers(text, evidence):
                 violations["unsupported_number"] = violations.get("unsupported_number", 0) + 1
+                continue
+            if support_ratio(text, evidence) < MIN_SUPPORT_RATIO:
+                # Câu dẫn một nhận định nhưng nói chuyện khác: dấu hiệu bịa hoặc bị dẫn dắt.
+                violations["weak_support"] = violations.get("weak_support", 0) + 1
                 continue
             report.sections.setdefault(section.perspective, []).append(
                 ValidatedSentence(text=text, claim_ids=valid_ids)
@@ -140,7 +157,7 @@ def render_markdown(
             for claim_id in sentence.claim_ids:
                 source = sources[claims[claim_id].source_id]
                 number = numbering[source.id]
-                marker = f"[{number}]({source.url})"
+                marker = f"[{number}]({markdown_url(source.url)})"
                 if marker not in cited:
                     cited.append(marker)
             rendered.append(f"{sentence.text.rstrip()} {''.join(cited)}")
@@ -159,10 +176,10 @@ def render_markdown(
     lines += ["## Nguồn", ""]
     for source_id, number in sorted(numbering.items(), key=lambda pair: pair[1]):
         source = sources[source_id]
-        title = source.title.replace("[", "(").replace("]", ")") or source.domain
+        title = markdown_text(source.title) or markdown_text(source.domain)
         accessed = f" · truy cập {source.fetched_at:%Y-%m-%d}" if source.fetched_at else ""
         origin = "kho nội bộ" if source.provider == "internal_kb" else source.domain
-        lines.append(f"{number}. [{title}]({source.url}) — {origin}{accessed}")
+        lines.append(f"{number}. [{title}]({markdown_url(source.url)}) — {origin}{accessed}")
     lines.append("")
 
     lines += ["## Phương pháp", ""]
@@ -172,7 +189,12 @@ def render_markdown(
 
 
 def citation_coverage(markdown: str) -> dict[str, int]:
-    """Đếm câu nội dung có/không có trích dẫn (bỏ qua tiêu đề, trích khối và mục siêu dữ liệu)."""
+    """Đếm câu nội dung có/không có trích dẫn (bỏ qua tiêu đề, trích khối và mục siêu dữ liệu).
+
+    Một câu là đoạn văn bản đứng trước một nhóm trích dẫn `[n](url)`; phần văn bản còn lại
+    sau nhóm trích dẫn cuối của dòng là câu không có nguồn. Chỉ tách theo nhóm trích dẫn nên
+    dấu ngoặc bình thường trong câu (ví dụ "(AI)") không bị hiểu nhầm là ranh giới câu.
+    """
     cited = uncited = 0
     in_meta = False
     for line in markdown.splitlines():
@@ -182,9 +204,23 @@ def citation_coverage(markdown: str) -> dict[str, int]:
             continue
         if in_meta or not stripped or stripped.startswith(("#", ">")):
             continue
-        for sentence in re.split(r"(?<=\))\s+(?=\S)", stripped):
-            if _CITATION.search(sentence):
-                cited += 1
-            elif sentence.strip():
-                uncited += 1
+        pieces = _CITATION_GROUP.split(stripped)
+        cited += sum(1 for piece in pieces[:-1] if _has_words(piece))
+        uncited += 1 if _has_words(pieces[-1]) else 0
     return {"cited_sentences": cited, "uncited_sentences": uncited}
+
+
+def _has_words(text: str) -> bool:
+    return bool(re.search(r"\w", text))
+
+
+_MARKDOWN_SPECIAL = re.compile(r"([\\`*_{}\[\]()#+!|<>~])")
+
+
+def markdown_text(value: str) -> str:
+    """Văn bản lấy từ nguồn (tiêu đề) đặt vào Markdown: một dòng, ký tự định dạng được thoát."""
+    return _MARKDOWN_SPECIAL.sub(r"\\\1", " ".join(value.split()))
+
+
+def markdown_url(value: str) -> str:
+    return value.replace(" ", "%20").replace("(", "%28").replace(")", "%29")
