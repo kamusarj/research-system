@@ -1,0 +1,46 @@
+{
+  "version": "research-eval-v1",
+  "description": "Câu hỏi mẫu về Business AI Agents để so sánh pipeline nghiên cứu sâu trước/sau tối ưu.",
+  "questions": [
+    {
+      "id": "q1-market-size",
+      "question": "Quy mô thị trường và tốc độ áp dụng AI agent trong doanh nghiệp năm 2025-2026 ra sao?",
+      "key_entities": ["Gartner", "McKinsey", "IDC", "agentic AI", "enterprise"]
+    },
+    {
+      "id": "q2-customer-service",
+      "question": "Doanh nghiệp đang dùng AI agent cho chăm sóc khách hàng như thế nào và đạt kết quả gì?",
+      "key_entities": ["customer service", "contact center", "Klarna", "Zendesk", "Salesforce"]
+    },
+    {
+      "id": "q3-platform-comparison",
+      "question": "So sánh các nền tảng xây dựng AI agent cho doanh nghiệp như Microsoft Copilot Studio, Salesforce Agentforce và Google Agentspace.",
+      "key_entities": ["Copilot Studio", "Agentforce", "Agentspace", "pricing", "integration"]
+    },
+    {
+      "id": "q4-architecture",
+      "question": "Kiến trúc kỹ thuật phổ biến của AI agent doanh nghiệp: orchestration, công cụ, bộ nhớ và đánh giá?",
+      "key_entities": ["orchestration", "tool calling", "memory", "MCP", "evaluation"]
+    },
+    {
+      "id": "q5-risk-compliance",
+      "question": "Rủi ro bảo mật và tuân thủ khi triển khai AI agent xử lý dữ liệu khách hàng là gì (EU AI Act, prompt injection)?",
+      "key_entities": ["EU AI Act", "prompt injection", "GDPR", "OWASP", "governance"]
+    },
+    {
+      "id": "q6-roi",
+      "question": "Doanh nghiệp đo ROI và hiệu quả của AI agent như thế nào, những chỉ số nào thường dùng?",
+      "key_entities": ["ROI", "productivity", "cost", "KPI", "case study"]
+    },
+    {
+      "id": "q7-finance-ops",
+      "question": "AI agent được áp dụng trong vận hành tài chính và kế toán doanh nghiệp ra sao?",
+      "key_entities": ["accounts payable", "invoice", "finance", "reconciliation", "audit"]
+    },
+    {
+      "id": "q8-sme-vietnam",
+      "question": "Doanh nghiệp vừa và nhỏ ở Việt Nam có thể bắt đầu với AI agent như thế nào, gặp rào cản gì?",
+      "key_entities": ["Việt Nam", "SME", "doanh nghiệp vừa và nhỏ", "chi phí", "kỹ năng"]
+    }
+  ]
+}

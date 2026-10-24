@@ -3,6 +3,7 @@ import asyncio
 import getpass
 import json
 import sys
+from pathlib import Path
 
 from sqlalchemy import func, select
 
@@ -67,12 +68,35 @@ def main() -> None:
     password_parser = subparsers.add_parser("set-password")
     password_parser.add_argument("--email", required=True)
     password_parser.add_argument("--password-stdin", action="store_true", required=True)
+    eval_parser = subparsers.add_parser("research-eval")
+    eval_parser.add_argument("--variant", choices=["optimized", "naive"], required=True)
+    eval_parser.add_argument("--questions", help="Danh sách id câu hỏi, phân cách dấu phẩy")
+    eval_parser.add_argument("--output", required=True, help="Tệp JSON kết quả")
+    compare_parser = subparsers.add_parser("research-eval-compare")
+    compare_parser.add_argument("baseline")
+    compare_parser.add_argument("candidate")
     usage_parser = subparsers.add_parser("ai-usage-report")
     usage_parser.add_argument("--since-hours", type=float, default=24.0)
     migration_parser = subparsers.add_parser("migrate-objects")
     migration_parser.add_argument("--mode", choices=["plan", "execute", "verify"], required=True)
     migration_parser.add_argument("--confirm-copy-only", action="store_true")
     args = parser.parse_args()
+    if args.command == "research-eval":
+        from app.evaluation.research_agent import run_eval
+
+        only = {item.strip() for item in args.questions.split(",")} if args.questions else None
+        with SessionLocal() as db:
+            result = run_eval(db, variant=args.variant, only=only)
+        Path(args.output).write_text(json.dumps(result, indent=2, ensure_ascii=False))
+        print(json.dumps(result["summary"], indent=2, ensure_ascii=False))
+        return
+    if args.command == "research-eval-compare":
+        from app.evaluation.research_agent import compare_markdown
+
+        baseline = json.loads(Path(args.baseline).read_text())
+        candidate = json.loads(Path(args.candidate).read_text())
+        print(compare_markdown(baseline, candidate))
+        return
     if args.command == "ai-usage-report":
         with SessionLocal() as db:
             report = ai_usage_report(db, since_hours=args.since_hours)
