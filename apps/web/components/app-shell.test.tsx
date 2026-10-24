@@ -99,3 +99,16 @@ describe("AppShell footer", () => {
     expect(screen.getByRole("main")).not.toHaveClass("graph-page");
   });
 });
+
+describe("AppShell mobile bottom navigation", () => {
+  it("offers the four most used destinations plus a sheet with everything else", () => {
+    mocks.pathname = "/research/runs/abc";
+    render(<AppShell><h1>Run</h1></AppShell>);
+    const bottom = screen.getByRole("navigation", { name: "Điều hướng nhanh" });
+    const links = within(bottom).getAllByRole("link");
+    expect(links.map((link) => link.getAttribute("href"))).toEqual(["/", "/research/new", "/research", "/ingestion"]);
+    expect(within(bottom).getByRole("link", { name: "deepResearchNav" })).toHaveAttribute("aria-current", "page");
+    expect(within(bottom).getByRole("link", { name: "Research" })).not.toHaveAttribute("aria-current");
+    expect(within(bottom).getByRole("button", { name: "Thêm" })).toHaveAttribute("aria-haspopup", "dialog");
+  });
+});

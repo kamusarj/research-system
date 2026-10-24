@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -72,6 +72,14 @@ export function AppShell({ children }: { children: ReactNode }) {
     ? [...navigationGroups, { key: "navAdministration", items: adminNavigation }]
     : navigationGroups;
   const allNavigation = groups.flatMap((group) => group.items);
+  // Điện thoại: thanh dưới với các mục dùng nhiều nhất, mọi mục khác trong bảng "Thêm".
+  const quickNavigation = ["/", "/research/new", "/research", "/ingestion"]
+    .map((href) => allNavigation.find((item) => item.href === href))
+    .filter((item): item is (typeof allNavigation)[number] => Boolean(item));
+  const sheetRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (sheetRef.current?.open) sheetRef.current.close();
+  }, [pathname]);
   const activeNavigation = allNavigation.find((item) => isActive(item.href))
     ?? (pathname.startsWith("/account") ? { href: "/account", key: "account", icon: "members" as IconName } : navigation[0]);
 
@@ -126,6 +134,44 @@ export function AppShell({ children }: { children: ReactNode }) {
           </Link>
         ))}
       </nav>
+
+      <nav className="bottom-nav" aria-label="Điều hướng nhanh">
+        {quickNavigation.map((item) => (
+          <Link
+            className={isActive(item.href) ? "current" : ""}
+            aria-current={isActive(item.href) ? "page" : undefined}
+            key={item.href}
+            href={item.href}
+          >
+            <NavIcon name={item.icon} />
+            <span>{t(item.key)}</span>
+          </Link>
+        ))}
+        <button type="button" className="bottom-nav-more" aria-haspopup="dialog" onClick={() => sheetRef.current?.showModal?.()}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+          <span>Thêm</span>
+        </button>
+      </nav>
+      <dialog className="nav-sheet" ref={sheetRef} aria-label="Tất cả mục điều hướng">
+        <div className="nav-sheet-header">
+          <strong>Tất cả mục</strong>
+          <button type="button" className="secondary" onClick={() => sheetRef.current?.close()}>Đóng</button>
+        </div>
+        <nav aria-label="Tất cả mục">
+          {allNavigation.map((item) => (
+            <Link
+              className={isActive(item.href) ? "current" : ""}
+              aria-current={isActive(item.href) ? "page" : undefined}
+              key={item.href}
+              href={item.href}
+              onClick={() => sheetRef.current?.close()}
+            >
+              <NavIcon name={item.icon} />
+              <span>{t(item.key)}</span>
+            </Link>
+          ))}
+        </nav>
+      </dialog>
 
       <div className="main">
         <div className="workspace-bar">
