@@ -3646,12 +3646,12 @@ a.identity-copy:hover strong { text-decoration: underline; }
     color: var(--muted);
     background: transparent;
     box-shadow: none;
-    font-size: .68rem;
+    font-size: .72rem;
     font-weight: 700;
     text-decoration: none;
   }
   .bottom-nav a span, .bottom-nav-more span { overflow: hidden; max-width: 100%; text-overflow: ellipsis; white-space: nowrap; }
-  .bottom-nav a.current { color: var(--primary); background: var(--primary-soft); }
+  .bottom-nav a.current { color: var(--primary-deep); background: var(--primary-soft); }
   .bottom-nav-more:hover { color: var(--text); background: var(--surface-hover); box-shadow: none; transform: none; }
   .main, .site-footer { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
   .nav-sheet[open] {
@@ -3673,3 +3673,6 @@ a.identity-copy:hover strong { text-decoration: underline; }
   .nav-sheet nav a { display: flex; align-items: center; gap: .5rem; min-height: 44px; padding: .5rem .65rem; border: 1px solid var(--border); border-radius: 10px; color: var(--text-body); font-size: var(--text-sm); font-weight: 600; text-decoration: none; }
   .nav-sheet nav a.current { border-color: var(--primary-soft-2); color: var(--primary-deep); background: var(--primary-soft); }
 }
+
+/* Chân trang luôn bắt đầu dưới màn hình đầu tiên: danh sách tải xong không đẩy nó đi (CLS). */
+.main { min-height: 100dvh; }
