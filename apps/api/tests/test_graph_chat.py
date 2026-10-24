@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 import httpx
@@ -535,8 +536,8 @@ def test_document_scope_chat_uses_passage_retrieval_when_pgvector_enabled(db, mo
     assert captured["limit"] == 2
     assert captured["query"] == "where is the tail answer?"
     passages = context["document_passages"]
-    assert len(passages) == 2
-    assert passages[0]["excerpt"].startswith("tail answer passage")
+    assert [passage["id"] for passage in passages] == ["chunk-tail", "chunk-head"]
+    assert all("excerpt" not in passage for passage in passages)  # văn bản không lặp hai lần
     assert context["document_text"].startswith("tail answer passage")
     assert "ignored filler" not in context["document_text"]
 
@@ -559,3 +560,43 @@ def test_document_scope_chat_falls_back_to_first_n_when_pgvector_disabled(db):
     assert context["document_text"].startswith("header passage")
     assert context["document_text_truncated"] is True
     assert len(context["document_text"]) <= settings.chat_max_context_chars // 2
+
+
+def test_tool_schemas_drop_generated_titles_but_keep_title_properties():
+    from app.services.graph_chat import _compact_schema, graph_chat_tools
+
+    tools = graph_chat_tools()
+    assert all('"title": "' not in json.dumps(tool["parameters"]) for tool in tools)
+    schema = {"title": "Args", "properties": {"title": {"title": "Title", "type": "string"}}}
+    assert _compact_schema(schema) == {"properties": {"title": {"type": "string"}}}
+
+
+def test_bounded_context_json_stays_valid_json():
+    from app.services.graph_chat import bounded_context_json
+
+    context = {
+        "scope": "document",
+        "document_text": "x" * 20_000,
+        "document_nodes": [{"label": f"node {index}", "summary": "s" * 400} for index in range(24)],
+    }
+    text = bounded_context_json(context, 6_000)
+    parsed = json.loads(text)
+    assert len(text) <= 6_000
+    assert parsed["document_text_truncated"] is True
+    assert parsed["document_nodes_truncated"] is True
+
+
+def test_history_is_bounded_by_characters_but_keeps_latest(db, monkeypatch):
+    from app.services.graph_chat import _history_input
+
+    monkeypatch.setattr(settings, "chat_max_history_chars", 1_000)
+    session = ChatSession(scope_type="graph", provider_name="openai", model_name="m")
+    db.add(session)
+    db.flush()
+    for index in range(6):
+        db.add(ChatMessage(session_id=session.id, role="user", content=f"{index} " + "y" * 400))
+    db.add(ChatMessage(session_id=session.id, role="user", content="latest " + "z" * 5_000))
+    db.commit()
+    history = _history_input(db, session)
+    assert history[-1]["content"].startswith("latest")
+    assert len(history) == 1

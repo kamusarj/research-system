@@ -984,7 +984,8 @@ class PgvectorProjection:
         """
         vector = self.embedding_client.embed_query(query)
         rows = self._search_chunks(db, vector, limit=limit, research_id=research_id)
-        return [(chunk_id, content, distance) for chunk_id, _rid, content, distance in rows]
+        # `_search_chunks` lấy dư (limit × 3) cho MMR ở đường tìm kiếm chung; chat chỉ cần top-k.
+        return [(chunk_id, content, distance) for chunk_id, _rid, content, distance in rows[:limit]]
 
 
 def rebuild_search_projections(

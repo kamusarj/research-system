@@ -33,6 +33,8 @@ class Settings(BaseSettings):
         "openai", "deepseek", "claude_code", "codex", "antigravity"
     ] = "deepseek"
     chat_max_history_messages: int = 20
+    # Ngân sách ký tự cho lịch sử gửi lại mỗi lượt; tin mới nhất luôn được giữ.
+    chat_max_history_chars: int = Field(default=8_000, ge=1_000, le=200_000)
     chat_max_context_chars: int = 16_000
     chat_max_tool_loops: int = 4
     chat_max_proposals: int = 20

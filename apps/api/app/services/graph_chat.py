@@ -175,6 +175,22 @@ TOOL_DESCRIPTIONS = {
 }
 
 
+def _compact_schema(node: Any) -> Any:
+    """Bỏ khóa `title` do Pydantic tự sinh: trùng tên thuộc tính, chỉ tốn token mỗi lượt gọi.
+
+    Thuộc tính có tên `title` (giá trị là schema dạng dict) được giữ nguyên.
+    """
+    if isinstance(node, dict):
+        return {
+            key: _compact_schema(value)
+            for key, value in node.items()
+            if not (key == "title" and isinstance(value, str))
+        }
+    if isinstance(node, list):
+        return [_compact_schema(value) for value in node]
+    return node
+
+
 def graph_chat_tools() -> list[dict[str, Any]]:
     return [
         {
@@ -182,7 +198,7 @@ def graph_chat_tools() -> list[dict[str, Any]]:
             "name": name,
             "description": TOOL_DESCRIPTIONS[name],
             "strict": True,
-            "parameters": model.model_json_schema(),
+            "parameters": _compact_schema(model.model_json_schema()),
         }
         for name, model in TOOL_MODELS.items()
     ]
@@ -647,6 +663,7 @@ def build_scope_context(db: Session, session: ChatSession) -> dict[str, Any]:
             )
         )
         passages = _document_scope_passages(db, session, research)
+        # Văn bản chỉ gửi một lần trong `document_text`; danh sách đoạn chỉ giữ mã để trích dẫn.
         document_text = "\n\n".join(passage["excerpt"] for passage in passages)
         passage_truncated = any(passage.get("truncated") for passage in passages)
         return {
@@ -658,7 +675,9 @@ def build_scope_context(db: Session, session: ChatSession) -> dict[str, Any]:
             "document_text_truncated": (
                 passage_truncated or len(document_text) > settings.chat_max_context_chars
             ),
-            "document_passages": passages,
+            "document_passages": [
+                {"id": passage["id"]} for passage in passages if passage.get("id")
+            ],
             "paper_fit": {
                 "score": evaluation.fit_score,
                 "decision": evaluation.decision,
@@ -981,11 +1000,42 @@ def _history_input(db: Session, session: ChatSession) -> list[dict[str, Any]]:
             .limit(settings.chat_max_history_messages)
         )
     )
-    return [
-        {"role": message.role, "content": redact_cloud_text(message.content)}
-        for message in reversed(messages)
-        if message.role in {"user", "assistant"}
-    ]
+    kept: list[dict[str, Any]] = []
+    used = 0
+    for message in messages:  # mới nhất trước
+        if message.role not in {"user", "assistant"}:
+            continue
+        content = redact_cloud_text(message.content)
+        if kept and used + len(content) > settings.chat_max_history_chars:
+            break
+        kept.append({"role": message.role, "content": content})
+        used += len(content)
+    return list(reversed(kept))
+
+
+def bounded_context_json(context: dict[str, Any], limit: int) -> str:
+    """JSON hợp lệ trong giới hạn ký tự: bớt phần tử danh sách và văn bản tài liệu trước,
+    thay vì cắt ngang chuỗi JSON (làm hỏng cấu trúc mà mô hình phải đọc)."""
+    bounded = dict(context)
+
+    def render() -> str:
+        return redact_cloud_text(json.dumps(bounded, ensure_ascii=False))
+
+    text = render()
+    for key in ("document_nodes", "children"):
+        items = list(bounded.get(key) or [])
+        while len(text) > limit and items:
+            items.pop()
+            bounded[key] = items
+            bounded[f"{key}_truncated"] = True
+            text = render()
+    document_text = bounded.get("document_text")
+    if len(text) > limit and isinstance(document_text, str):
+        keep = max(0, len(document_text) - (len(text) - limit) - 64)
+        bounded["document_text"] = document_text[:keep]
+        bounded["document_text_truncated"] = True
+        text = render()
+    return text if len(text) <= limit else text[:limit]
 
 
 def _usage_add(total: dict[str, int], usage: dict[str, Any]) -> None:
@@ -1016,9 +1066,7 @@ def run_chat_turn(
     runtime = runtime or graph_chat_provider(session.provider_name)
     executor = ToolExecutor(db, session)
     context = build_scope_context(db, session)
-    context_text = redact_cloud_text(json.dumps(context, ensure_ascii=False))[
-        : settings.chat_max_context_chars
-    ]
+    context_text = bounded_context_json(context, settings.chat_max_context_chars)
     summary = redact_cloud_text(session.conversation_summary)[
         : settings.chat_max_context_chars // 4
     ]
