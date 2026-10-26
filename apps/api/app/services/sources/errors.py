@@ -53,6 +53,13 @@ USER_ACTIONABLE_CODES: frozenset[str] = frozenset(
         "PDF_SCANNED_OCR_DISABLED",
         "TRANSCRIPT_SOURCE_INVALID",
         "TRANSCRIPT_UNAVAILABLE",
+        # Gói ChatGPT riêng: người gửi tự xử lý (kết nối lại, chờ hạn mức, đổi model).
+        "CHATGPT_PLAN_NOT_CONNECTED",
+        "CHATGPT_PLAN_REAUTH_REQUIRED",
+        "CHATGPT_PLAN_SCOPE_MISSING",
+        "CHATGPT_PLAN_LIMIT_REACHED",
+        "CHATGPT_PLAN_NOT_ELIGIBLE",
+        "CHATGPT_PLAN_MODEL_UNAVAILABLE",
     }
 )
 

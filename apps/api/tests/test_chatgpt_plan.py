@@ -580,3 +580,42 @@ def test_disabled_feature_reports_status_but_refuses_to_start(client):
     response = client.post("/api/v1/ai-connections/chatgpt/start")
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "CHATGPT_PLAN_DISABLED"
+
+
+def test_only_the_latest_sign_in_attempt_stays_valid(client, fake):
+    first = start(client, fake)
+    start(client, fake)
+    response = client.post(
+        "/api/v1/ai-connections/chatgpt/complete",
+        json={"state": first["state"], "code": "code-1", "client_id": ISSUED},
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "CHATGPT_PLAN_STATE_INVALID"
+
+
+def test_wrong_server_key_is_an_operator_error_not_a_forced_sign_out(
+    client, db, fake, monkeypatch
+):
+    connect(client, fake)
+    monkeypatch.setattr(
+        settings, "credentials_encryption_key", SecretStr(Fernet.generate_key().decode())
+    )
+    with pytest.raises(chatgpt_plan.ChatGPTPlanError) as error:
+        ChatGPTPlanProvider("local-user").complete_json("prompt", Answer)
+    assert error.value.code == "CHATGPT_PLAN_VAULT_UNAVAILABLE" and error.value.retryable
+    assert stored(db).status == "active"
+    assert fake.refreshes == 0
+
+
+def test_signing_in_with_a_different_account_revokes_the_new_session(client, db, fake):
+    connect(client, fake)
+    fake.subject = "another-chatgpt-account"
+    params = start(client, fake)
+    response = client.post(
+        "/api/v1/ai-connections/chatgpt/complete",
+        json={"state": params["state"], "code": "code-2"},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "CHATGPT_PLAN_ACCOUNT_MISMATCH"
+    assert fake.revoked and fake.revoked[-1]["client_id"] == [ISSUED]
+    assert decrypt_json(stored(db).encrypted_tokens)["access_token"] == "at-1"

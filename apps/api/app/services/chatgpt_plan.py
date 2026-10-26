@@ -280,9 +280,13 @@ def _audit(db: Session, connection: AIPlanConnection, action: str, **payload: An
 def start_authorization(db: Session, user_id: str) -> str:
     _require_enabled()
     now = utcnow()
+    # Dọn lượt hết hạn, và lượt cũ chưa dùng của chính người này: chỉ lượt mới nhất còn hiệu lực.
     db.execute(
         delete(AIPlanAuthAttempt)
-        .where(AIPlanAuthAttempt.expires_at < now)
+        .where(
+            (AIPlanAuthAttempt.expires_at < now)
+            | ((AIPlanAuthAttempt.user_id == user_id) & AIPlanAuthAttempt.consumed_at.is_(None))
+        )
         .execution_options(synchronize_session=False)
     )
     connection = get_connection(db, user_id)
@@ -402,12 +406,21 @@ def _earliest_refresh(value: Any, now: datetime) -> datetime | None:
     return None
 
 
-def _stored_tokens(connection: AIPlanConnection) -> dict[str, Any]:
+def _stored_tokens(connection: AIPlanConnection, *, strict: bool = False) -> dict[str, Any]:
     if not connection.encrypted_tokens:
         return {}
     try:
         return decrypt_json(connection.encrypted_tokens)
-    except VaultUnavailable:
+    except VaultUnavailable as exc:
+        if strict:
+            # Khóa máy chủ sai/thiếu: lỗi vận hành, không phải lỗi của người dùng; giữ nguyên
+            # trạng thái kết nối để sửa khóa xong là dùng lại được.
+            raise ChatGPTPlanError(
+                "CHATGPT_PLAN_VAULT_UNAVAILABLE",
+                "Máy chủ không giải mã được thông tin kết nối ChatGPT",
+                503,
+                retryable=True,
+            ) from exc
         return {}
 
 
@@ -531,7 +544,10 @@ def complete_authorization(
     now = utcnow()
     connection = get_connection(db, user_id)
     if connection is not None and connection.subject and connection.subject != str(claims["sub"]):
-        # Đăng ký cũ gắn với tài khoản/workspace khác: không ghi đè token của đăng ký đó.
+        # Đăng ký cũ gắn với tài khoản/workspace khác: không ghi đè token của đăng ký đó, và thu
+        # hồi ngay phiên vừa cấp cho tài khoản kia để không để lại quyền mồ côi.
+        if tokens.get("refresh_token"):
+            _revoke(str(tokens["refresh_token"]), client_id)
         raise ChatGPTPlanError(
             "CHATGPT_PLAN_ACCOUNT_MISMATCH",
             "Đây là tài khoản ChatGPT khác với tài khoản đã kết nối; hãy xóa kết nối cũ trước",
@@ -594,36 +610,47 @@ def set_preferences(
     return connection
 
 
+def _revoke(refresh_token: str, client_id: str) -> bool:
+    """Thu hồi phiên gia hạn; True khi OpenAI xác nhận (HTTP 200, kể cả token đã vô hiệu)."""
+
+    for attempt in range(3):
+        if attempt:
+            time.sleep(0.5 * attempt)
+        try:
+            with _client(10) as client:
+                response = client.post(
+                    str(discovery()["revocation_endpoint"]),
+                    data={
+                        "token": refresh_token,
+                        "token_type_hint": "refresh_token",
+                        "client_id": client_id,
+                    },
+                    auth=_client_auth(),
+                )
+        except (httpx.HTTPError, KeyError, ValueError):
+            continue
+        if response.status_code == 200:
+            return True
+        if response.status_code < 500:
+            return False
+    return False
+
+
 def disconnect(db: Session, user_id: str, *, forget: bool = False) -> bool:
     """Thu hồi phiên gia hạn tại OpenAI rồi xóa token. Trả về True nếu OpenAI xác nhận thu hồi."""
 
     connection = get_connection(db, user_id)
     if connection is None:
         return True
-    refresh_token = _stored_tokens(connection).get("refresh_token")
-    revoked = not refresh_token
+    try:
+        refresh_token = _stored_tokens(connection, strict=True).get("refresh_token")
+    except ChatGPTPlanError:
+        refresh_token = None
+        revoked = False  # Không đọc được token thì không thể xác nhận đã thu hồi.
+    else:
+        revoked = not refresh_token
     if refresh_token and enabled():
-        for attempt in range(3):
-            if attempt:
-                time.sleep(0.5 * attempt)
-            try:
-                with _client(10) as client:
-                    response = client.post(
-                        str(discovery()["revocation_endpoint"]),
-                        data={
-                            "token": refresh_token,
-                            "token_type_hint": "refresh_token",
-                            "client_id": connection.client_id,
-                        },
-                        auth=_client_auth(),
-                    )
-                if response.status_code == 200:
-                    revoked = True
-                    break
-                if response.status_code < 500:
-                    break
-            except (httpx.HTTPError, KeyError, ValueError):
-                continue
+        revoked = _revoke(str(refresh_token), connection.client_id)
     _audit(db, connection, "ai_plan.disconnected", remote_revoked=revoked, forget=forget)
     if forget:
         db.delete(connection)
@@ -647,7 +674,7 @@ def _mark(db: Session, connection: AIPlanConnection, status: str, code: str) -> 
 
 
 def _refresh(db: Session, connection: AIPlanConnection) -> dict[str, Any]:
-    tokens = _stored_tokens(connection)
+    tokens = _stored_tokens(connection, strict=True)
     refresh_token = tokens.get("refresh_token")
     if not refresh_token:
         _mark(db, connection, "reauth_required", "CHATGPT_PLAN_REAUTH_REQUIRED")
@@ -692,9 +719,15 @@ def _refresh(db: Session, connection: AIPlanConnection) -> dict[str, Any]:
             },
         )
         raise ChatGPTPlanError("CHATGPT_PLAN_FAILED", "ChatGPT từ chối làm mới phiên", 502)
-    payload = response.json()
+    try:
+        payload = response.json()
+        new_access = str(payload["access_token"])
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ChatGPTPlanError(
+            "CHATGPT_PLAN_FAILED", "ChatGPT trả về phản hồi làm mới không hợp lệ", 502
+        ) from exc
     now = utcnow()
-    tokens["access_token"] = str(payload["access_token"])
+    tokens["access_token"] = new_access
     if payload.get("refresh_token"):
         tokens["refresh_token"] = str(payload["refresh_token"])
     if payload.get("id_token"):
@@ -745,11 +778,11 @@ def access_token(user_id: str, *, force_refresh: bool = False) -> tuple[str, str
             )
         if connection.status == "reauth_required":
             raise _reauth_error()
-        tokens = _stored_tokens(connection)
+        tokens = _stored_tokens(connection, strict=True)
         if force_refresh or _needs_refresh(connection, utcnow()) or not tokens.get("access_token"):
             # Khóa hàng (đọc lại) để hai lượt song song không cùng xoay một refresh token.
             db.refresh(connection, with_for_update=True)
-            tokens = _stored_tokens(connection)
+            tokens = _stored_tokens(connection, strict=True)
             if (
                 force_refresh
                 or _needs_refresh(connection, utcnow())
