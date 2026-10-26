@@ -616,7 +616,7 @@ def test_low_fit_readable_document_still_builds_isolated_graph(
 
     storage = use_storage(tmp_path)
     monkeypatch.setattr(
-        "app.services.document_processing.provider", lambda _name=None: LowFitGraphProvider()
+        "app.services.document_processing.provider", lambda _name=None, **_kw: LowFitGraphProvider()
     )
     created = client.post(
         "/api/v1/documents",
@@ -762,7 +762,7 @@ def test_provider_transport_failure_is_typed_and_retry_scheduled(client, db, tmp
             raise httpx.ConnectError("offline")
 
     monkeypatch.setattr(
-        "app.services.document_processing.provider", lambda _name=None: UnavailableProvider()
+        "app.services.document_processing.provider", lambda _name=None, **_kw: UnavailableProvider()
     )
     assert run_pending_documents(db, storage=storage) == 1
 

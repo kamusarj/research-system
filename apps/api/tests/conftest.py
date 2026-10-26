@@ -131,11 +131,14 @@ class DeterministicTestProvider:
 def deterministic_ai(monkeypatch):
     rate_limiter.clear()
     runtime = DeterministicTestProvider()
-    monkeypatch.setattr("app.services.ai.provider", lambda _name=None: runtime)
-    monkeypatch.setattr("app.services.ingestion.provider", lambda _name=None: runtime)
-    monkeypatch.setattr("app.services.document_processing.provider", lambda _name=None: runtime)
-    monkeypatch.setattr("app.services.document_graph_research.provider", lambda _name=None: runtime)
-    monkeypatch.setattr("app.services.document_editing.provider", lambda _name=None: runtime)
+    for module in (
+        "ai",
+        "ingestion",
+        "document_processing",
+        "document_graph_research",
+        "document_editing",
+    ):
+        monkeypatch.setattr(f"app.services.{module}.provider", lambda _name=None, **_kw: runtime)
     yield
     rate_limiter.clear()
 

@@ -313,3 +313,17 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 },
             )
             request_id_context.reset(token)
+
+
+class OAuthCallbackLogFilter(logging.Filter):
+    """Bỏ query (mã ủy quyền, state) khỏi dòng log truy cập của các đường callback OAuth."""
+
+    PREFIXES = ("/auth/callback", "/account/ai/callback")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):
+            path = args[2]
+            if path.startswith(self.PREFIXES) and "?" in path:
+                record.args = (*args[:2], path.split("?", 1)[0] + "?[redacted]", *args[3:])
+        return True

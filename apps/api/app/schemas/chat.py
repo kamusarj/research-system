@@ -42,7 +42,9 @@ class ChatVerificationRead(BaseModel):
 
 
 class ChatConnectionRequest(PersonalKeyRequest):
-    provider: Literal["openai", "deepseek", "claude_code", "codex", "antigravity"] | None = None
+    provider: (
+        Literal["openai", "deepseek", "claude_code", "codex", "antigravity", "chatgpt_plan"] | None
+    ) = None
     credential_source: Literal["system", "personal"] = "system"
     model_name: str | None = Field(
         default=None, min_length=1, max_length=200, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$"

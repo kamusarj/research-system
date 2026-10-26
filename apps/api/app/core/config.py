@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     openai_model: str = "gpt-5.6-luna"
     graph_chat_default_provider: Literal[
-        "openai", "deepseek", "claude_code", "codex", "antigravity"
+        "openai", "deepseek", "claude_code", "codex", "antigravity", "chatgpt_plan"
     ] = "deepseek"
     chat_max_history_messages: int = 20
     # Ngân sách ký tự cho lịch sử gửi lại mỗi lượt; tin mới nhất luôn được giữ.
@@ -122,6 +122,23 @@ class Settings(BaseSettings):
     codex_model: str = "gpt-6-luna"
     codex_effort: Literal["low", "medium", "high", "xhigh", "max"] | None = "low"
     antigravity_model: str = "gemini-3.8-flash-medium"
+    # --- Gói ChatGPT của từng người dùng (Sign in with ChatGPT + ChatGPT plan usage).
+    # Không có client ID = chế độ cục bộ: tự đăng ký `dynamic_agent_client`, callback phải là
+    # loopback 127.0.0.1 nên chỉ dùng được từ trình duyệt trên chính máy chạy API. Bản web
+    # cần client ID do OpenAI cấp (form đăng ký đối tác) và callback HTTPS đã đăng ký.
+    chatgpt_plan_enabled: bool = False
+    chatgpt_plan_client_id: str = ""
+    chatgpt_plan_client_secret: SecretStr | None = None
+    chatgpt_plan_redirect_uri: str = ""  # rỗng = http://127.0.0.1:18000/auth/callback (cục bộ)
+    chatgpt_plan_app_url: str = ""  # rỗng = origin đầu tiên của API_CORS_ORIGINS
+    chatgpt_plan_agent_name: str = "Business AI Agents"
+    chatgpt_plan_default_model: str = ""  # rỗng = model đầu tiên trong danh mục của tài khoản
+    chatgpt_plan_reasoning_effort: Literal["low", "medium", "high"] | None = None
+    chatgpt_plan_host_id: str = ""  # rỗng = dẫn xuất ổn định từ khóa mã hóa
+    chatgpt_plan_issuer: str = "https://auth.openai.com"
+    chatgpt_plan_api_base: str = "https://api.openai.com/v1"
+    # Khóa Fernet mã hóa token OAuth lưu trong DB (`python -m app.operations generate-fernet-key`).
+    credentials_encryption_key: SecretStr | None = None
     intake_auto_approve_confidence: float = 0.85
     # Tự duyệt chỉ khi nguồn thuộc các tên miền này (và tên miền con); rỗng = không giới hạn.
     # Nội dung có dấu hiệu prompt injection không bao giờ được tự duyệt.
@@ -249,6 +266,8 @@ class Settings(BaseSettings):
             "github_token",
             "metrics_bearer_token",
             "browserless_token",
+            "chatgpt_plan_client_secret",
+            "credentials_encryption_key",
         )
         secret_root = Path(self.secret_files_dir)
         for field_name in secret_fields:
@@ -273,6 +292,14 @@ class Settings(BaseSettings):
                 raise ValueError("Staging/production requires AUTH_COOKIE_SECURE=true")
             if not self.auth_cookie_name.startswith("__Host-"):
                 raise ValueError("Staging/production requires an __Host- session cookie")
+            if self.chatgpt_plan_enabled and not self.chatgpt_plan_client_id.strip():
+                # Luồng tự đăng ký chỉ dành cho ứng dụng chạy trên máy người dùng.
+                raise ValueError("Staging/production ChatGPT plan usage needs an issued client ID")
+        if self.chatgpt_plan_enabled and (
+            self.credentials_encryption_key is None
+            or not self.credentials_encryption_key.get_secret_value().strip()
+        ):
+            raise ValueError("CHATGPT_PLAN_ENABLED requires CREDENTIALS_ENCRYPTION_KEY")
         return self
 
     @property
@@ -306,6 +333,23 @@ class Settings(BaseSettings):
     @property
     def auth_enabled(self) -> bool:
         return self.auth_mode == "local"
+
+    @property
+    def chatgpt_plan_local_mode(self) -> bool:
+        return not self.chatgpt_plan_client_id.strip()
+
+    @property
+    def chatgpt_plan_callback(self) -> str:
+        return (
+            self.chatgpt_plan_redirect_uri.strip() or "http://127.0.0.1:18000/auth/callback"
+        )
+
+    @property
+    def chatgpt_plan_web_origin(self) -> str:
+        configured = self.chatgpt_plan_app_url.strip().rstrip("/")
+        if configured:
+            return configured
+        return self.cors_origins[0].rstrip("/") if self.cors_origins else ""
 
 
 @lru_cache

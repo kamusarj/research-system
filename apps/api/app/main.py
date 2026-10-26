@@ -1,19 +1,24 @@
 import hmac
 import logging
 from contextlib import asynccontextmanager
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.api.router import api_router
 from app.core.auth import AuthMiddleware
 from app.core.config import settings
 from app.core.localization import product_error_message
-from app.core.observability import ObservabilityMiddleware, configure_logging
+from app.core.observability import (
+    OAuthCallbackLogFilter,
+    ObservabilityMiddleware,
+    configure_logging,
+)
 from app.core.request_guard import RequestGuardMiddleware
 from app.core.runtime_controls import RuntimeControlsMiddleware
 from app.services.neo4j_projection import GraphProjectionError
@@ -21,6 +26,8 @@ from app.services.object_storage import DocumentError
 from app.services.search_projection import SearchProjectionError
 
 logger = logging.getLogger(__name__)
+# Nhật ký truy cập của uvicorn ghi cả query: không để mã OAuth của callback lọt vào log.
+logging.getLogger("uvicorn.access").addFilter(OAuthCallbackLogFilter())
 
 HTTP_ERROR_CODES = {
     401: "AUTH_REQUIRED",
@@ -57,6 +64,30 @@ app.add_middleware(AuthMiddleware)
 app.add_middleware(RequestGuardMiddleware)
 app.add_middleware(ObservabilityMiddleware)
 app.include_router(api_router, prefix="/api/v1")
+
+
+OAUTH_CALLBACK_PARAMS = ("code", "state", "error", "client_id", "scope")
+
+
+@app.get("/auth/callback", include_in_schema=False)
+def chatgpt_plan_loopback_callback(request: Request) -> Response:
+    """Chế độ cục bộ: OpenAI chỉ chuyển về loopback `127.0.0.1`, nơi trình duyệt không mang
+    cookie đăng nhập của ứng dụng. Chuyển tiếp nguyên tham số sang trang web để trang đó hoàn tất
+    trong đúng phiên của người đã bấm kết nối; tại đây không đổi mã lấy token."""
+
+    origin = settings.chatgpt_plan_web_origin
+    if not (settings.chatgpt_plan_enabled and settings.chatgpt_plan_local_mode and origin):
+        raise HTTPException(status_code=404, detail="Không tìm thấy")
+    params = {
+        name: value[:4096]
+        for name in OAUTH_CALLBACK_PARAMS
+        if (value := request.query_params.get(name))
+    }
+    return RedirectResponse(
+        f"{origin}/account/ai/callback?{urlencode(params)}",
+        status_code=303,
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+    )
 
 
 @app.get("/metrics", include_in_schema=False)

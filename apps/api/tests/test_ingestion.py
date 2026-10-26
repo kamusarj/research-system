@@ -41,6 +41,7 @@ def test_provider_registry_never_exposes_keys(client):
         "claude_code",
         "codex",
         "antigravity",
+        "chatgpt_plan",
     }
     assert all("api_key" not in item for item in providers)
     assert "token" not in response.text.lower()

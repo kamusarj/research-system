@@ -44,6 +44,7 @@ from app.models import (
     research_tags,
 )
 from app.schemas.documents import DocumentContentRead, DocumentWorkspaceRead, PaperEvaluationRead
+from app.services.chatgpt_plan import default_provider_for
 from app.services.document_graph import _extract_docx, read_stored_object
 from app.services.object_storage import (
     DocumentError,
@@ -577,7 +578,7 @@ def add_document_records(
         processing_status="uploaded",
         review_status="not_requested",
         extraction_limitations=[],
-        provider_name=provider_name or settings.ai_provider,
+        provider_name=provider_name or default_provider_for(db) or settings.ai_provider,
     )
     db.add(workspace)
     db.add(

@@ -34,6 +34,8 @@ from app.schemas.intake_receipts import (
     ReceiptItemRead,
     ReceiptRead,
 )
+from app.services.chatgpt_plan import PROVIDER_ID as PLAN_PROVIDER_ID
+from app.services.chatgpt_plan import default_provider_for
 from app.services.documents import (
     add_document_records,
     normalized_upload,
@@ -95,20 +97,27 @@ def _source_metadata(data: ReceiptCreate) -> dict[str, object]:
     return data.source.metadata.model_dump(mode="json", exclude_none=True)
 
 
+def _requested_provider(db: Session, data, principal: Principal) -> str:
+    # Tài khoản dịch vụ (Discord…) không có gói ChatGPT riêng: luôn theo cấu hình máy chủ.
+    preferred = None if principal.auth_kind == "service" else default_provider_for(db, principal.id)
+    return data.provider or preferred or settings.ai_provider
+
+
 def _new_submission(
+    db: Session,
     *,
     url: str,
     data,
     source_type: str,
     source_ref: str,
-    submitted_by: str,
+    principal: Principal,
 ) -> LinkSubmission:
     return LinkSubmission(
         url=url,
         source_type=source_type,
         source_ref=source_ref,
-        submitted_by=submitted_by,
-        provider_name=data.provider or settings.ai_provider,
+        submitted_by=principal.id,
+        provider_name=_requested_provider(db, data, principal),
         auto_approve=data.auto_approve and current_principal_may_publish(),
         status="pending",
         stage="pending",
@@ -190,15 +199,16 @@ def _deliver_urls_once(db: Session, data: ReceiptCreate, principal: Principal) -
         )
         initial_disposition = "linked_existing"
         if submission is not None and _should_requeue(submission):
-            _reset_failed_submission(submission, requested)
+            _reset_failed_submission(db, submission, requested, principal)
             initial_disposition = "queued"
         elif submission is None:
             submission = _new_submission(
+                db,
                 url=normalized,
                 data=requested,
                 source_type=source.type,
                 source_ref=source.occurrence_ref,
-                submitted_by=principal.id,
+                principal=principal,
             )
             db.add(submission)
             db.flush()
@@ -274,7 +284,9 @@ def _should_requeue(item: LinkSubmission) -> bool:
     )
 
 
-def _reset_failed_submission(item: LinkSubmission, data: LinkCreate) -> None:
+def _reset_failed_submission(
+    db: Session, item: LinkSubmission, data: LinkCreate, principal: Principal
+) -> None:
     item.status = "pending"
     item.stage = "pending"
     item.review_status = "not_requested"
@@ -286,7 +298,10 @@ def _reset_failed_submission(item: LinkSubmission, data: LinkCreate) -> None:
     item.error = None
     item.error_code = None
     item.error_details = {}
-    item.provider_name = data.provider or settings.ai_provider
+    item.provider_name = _requested_provider(db, data, principal)
+    if item.provider_name == PLAN_PROVIDER_ID:
+        # Người gửi lại link chạy bằng gói ChatGPT của chính họ, nên họ là người được tính quota.
+        item.submitted_by = principal.id
     item.auto_approve = data.auto_approve and current_principal_may_publish()
 
 
@@ -298,7 +313,7 @@ def create_compatibility_submission(
     existing = db.scalar(select(LinkSubmission).where(LinkSubmission.url == normalized))
     requeued = existing is not None and _should_requeue(existing)
     if requeued:
-        _reset_failed_submission(existing, data)
+        _reset_failed_submission(db, existing, data, actor)
     occurrence_ref = data.source_ref or str(uuid.uuid4())
     namespace = "local" if data.source_type == "manual" else f"compat-{data.source_type}"
     receipt_data = ReceiptCreate.model_validate(

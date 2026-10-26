@@ -105,6 +105,36 @@ ERROR_MESSAGES = {
     "KNOWLEDGE_GAP_NOT_FOUND": "Không tìm thấy khoảng trống tri thức.",
     "HOST_NOT_ALLOWED": "Tên máy chủ của yêu cầu không được chấp nhận.",
     "CROSS_SITE_REQUEST_BLOCKED": "Yêu cầu từ trang web khác bị chặn.",
+    "CHATGPT_PLAN_DISABLED": "Tính năng dùng gói ChatGPT chưa được bật trên máy chủ này.",
+    "CHATGPT_PLAN_NOT_CONNECTED": "Bạn chưa kết nối gói ChatGPT. Vào trang Tài khoản để kết nối.",
+    "CHATGPT_PLAN_REAUTH_REQUIRED": (
+        "Phiên ChatGPT đã hết hạn. Hãy kết nối lại trong trang Tài khoản."
+    ),
+    "CHATGPT_PLAN_SCOPE_MISSING": "Bạn chưa cho phép ứng dụng dùng gói ChatGPT. Hãy kết nối lại.",
+    "CHATGPT_PLAN_CONSENT_DECLINED": "Bạn đã từ chối cho ứng dụng dùng gói ChatGPT.",
+    "CHATGPT_PLAN_LIMIT_REACHED": (
+        "Đã chạm hạn mức gói ChatGPT hoặc giới hạn riêng cho ứng dụng này. "
+        "Xem và chỉnh ở ChatGPT → Cài đặt → Mức sử dụng."
+    ),
+    "CHATGPT_PLAN_NOT_ELIGIBLE": "Tài khoản ChatGPT này không được dùng gói cho ứng dụng.",
+    "CHATGPT_PLAN_UNAVAILABLE": "ChatGPT tạm thời không phản hồi. Hãy thử lại sau.",
+    "CHATGPT_PLAN_TIMEOUT": "ChatGPT trả lời quá lâu. Hãy thử lại.",
+    "CHATGPT_PLAN_UNSUPPORTED": "Gói ChatGPT không hỗ trợ model hoặc tính năng của yêu cầu này.",
+    "CHATGPT_PLAN_INCOMPLETE": "ChatGPT dừng giữa chừng trước khi trả lời xong.",
+    "CHATGPT_PLAN_FAILED": "ChatGPT không hoàn tất yêu cầu.",
+    "CHATGPT_PLAN_STATE_INVALID": (
+        "Phiên kết nối ChatGPT đã hết hạn hoặc không hợp lệ. Hãy thử lại."
+    ),
+    "CHATGPT_PLAN_AUTH_FAILED": "ChatGPT không hoàn tất đăng nhập. Hãy thử kết nối lại.",
+    "CHATGPT_PLAN_IDENTITY_INVALID": "Không xác minh được danh tính ChatGPT.",
+    "CHATGPT_PLAN_ACCOUNT_MISMATCH": (
+        "Đây là tài khoản ChatGPT khác tài khoản đã kết nối. Hãy xóa kết nối cũ trước."
+    ),
+    "CHATGPT_PLAN_MODEL_UNAVAILABLE": "Model này không có trong gói ChatGPT của bạn.",
+    "CHATGPT_PLAN_OWNER_ONLY": (
+        "Việc này dùng gói ChatGPT của người tạo; chỉ người đó mới chạy lại được."
+    ),
+    "CHATGPT_PLAN_VAULT_UNAVAILABLE": "Máy chủ chưa cấu hình khóa mã hóa cho kết nối ChatGPT.",
 }
 
 

@@ -342,7 +342,9 @@ class DocumentBrainstormRequest(BaseModel):
     history: list[DocumentBrainstormMessage] = Field(default_factory=list, max_length=10)
     selection_start: int | None = Field(default=None, ge=0)
     selection_end: int | None = Field(default=None, gt=0)
-    provider: Literal["openai", "deepseek", "claude_code", "codex", "antigravity"] | None = None
+    provider: (
+        Literal["openai", "deepseek", "claude_code", "codex", "antigravity", "chatgpt_plan"] | None
+    ) = None
 
     @field_validator("message")
     @classmethod
@@ -398,7 +400,9 @@ class DocumentInstantEditRequest(BaseModel):
     action: DocumentInstantEditAction
     instruction: str | None = Field(default=None, max_length=1_000)
     source_format: str | None = Field(default=None, max_length=40)
-    provider: Literal["openai", "deepseek", "claude_code", "codex", "antigravity"] | None = None
+    provider: (
+        Literal["openai", "deepseek", "claude_code", "codex", "antigravity", "chatgpt_plan"] | None
+    ) = None
 
     @model_validator(mode="after")
     def validate_instant_edit(self):

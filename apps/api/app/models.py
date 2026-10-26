@@ -708,6 +708,8 @@ class DocumentGraphWorkspace(TimestampMixin, Base):
     error_message: Mapped[str | None] = mapped_column(Text)
     provider_name: Mapped[str | None] = mapped_column(String(80))
     model_name: Mapped[str | None] = mapped_column(String(200))
+    # Người tải lên; lượt AI dùng gói ChatGPT của người này khi chọn `chatgpt_plan`.
+    requested_by: Mapped[str | None] = mapped_column(String(120), default=current_actor_id)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -990,3 +992,57 @@ class ResearchWebCache(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     hit_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AIPlanConnection(TimestampMixin, Base):
+    """Gói ChatGPT một người dùng đã cho phép ứng dụng dùng (Sign in with ChatGPT).
+
+    Token OAuth chỉ nằm trong `encrypted_tokens` (Fernet). Khi đăng xuất, token bị xóa nhưng
+    client ID đã cấp và danh tính được giữ để lần đăng nhập sau dùng lại đúng đăng ký đó.
+    """
+
+    __tablename__ = "ai_plan_connections"
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", name="uq_ai_plan_connection_user"),
+        CheckConstraint(
+            "status IN ('active', 'signed_out', 'reauth_required', 'plan_disabled')",
+            name="ck_ai_plan_connection_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    provider: Mapped[str] = mapped_column(String(30), default="chatgpt")
+    status: Mapped[str] = mapped_column(String(30), default="signed_out")
+    issuer: Mapped[str] = mapped_column(String(200))
+    subject: Mapped[str] = mapped_column(String(200))
+    email: Mapped[str | None] = mapped_column(String(320))
+    client_id: Mapped[str] = mapped_column(String(200))
+    scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    model: Mapped[str | None] = mapped_column(String(200))
+    models_json: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
+    # Bật: việc AI mới do người này khởi chạy mặc định dùng gói ChatGPT của họ.
+    use_by_default: Mapped[bool] = mapped_column(Boolean, default=True)
+    encrypted_tokens: Mapped[str | None] = mapped_column(Text)
+    access_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    earliest_refresh_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error_code: Mapped[str | None] = mapped_column(String(80))
+    connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AIPlanAuthAttempt(Base):
+    """Một lần đăng nhập OAuth đang chờ callback; dùng một lần, hết hạn sau vài phút."""
+
+    __tablename__ = "ai_plan_auth_attempts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    state_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    client_id: Mapped[str] = mapped_column(String(200))
+    redirect_uri: Mapped[str] = mapped_column(String(500))
+    # Bộ xác minh PKCE và nonce, mã hóa như token.
+    encrypted_secret: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

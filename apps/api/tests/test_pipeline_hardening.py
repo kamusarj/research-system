@@ -162,7 +162,7 @@ def test_enrichment_provider_rate_limit_is_a_typed_error(client, monkeypatch):
                 "rate limited", request=request, response=httpx.Response(429, request=request)
             )
 
-    monkeypatch.setattr("app.services.ai.provider", lambda _name=None: RateLimitedProvider())
+    monkeypatch.setattr("app.services.ai.provider", lambda _name=None, **_kw: RateLimitedProvider())
 
     response = client.post(f"/api/v1/ai/enrich/{created['id']}")
 

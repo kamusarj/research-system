@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.ai import router as ai_router
+from app.api.ai_connections import router as ai_connections_router
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
 from app.api.collector import router as collector_router
@@ -20,6 +21,7 @@ from app.api.system import router as system_router
 
 api_router = APIRouter()
 api_router.include_router(ai_router)
+api_router.include_router(ai_connections_router)
 api_router.include_router(auth_router)
 api_router.include_router(chat_router)
 api_router.include_router(collector_router)

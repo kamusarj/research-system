@@ -10,7 +10,9 @@ from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.identity import current_actor_id
 from app.models import AIOutput, EmbeddingChunk, ResearchItem
+from app.services import chatgpt_plan
 from app.services.ai_output_guard import redact_credentials
 from app.services.ai_usage import (
     report_usage,
@@ -292,6 +294,32 @@ class AntigravityProvider(CliBridgeProvider):
     backend = "antigravity"
 
 
+class ChatGPTPlanProvider(BaseProvider):
+    """Gói ChatGPT Plus/Pro của chính người dùng (Sign in with ChatGPT), không dùng khóa máy chủ.
+
+    Gắn với một người dùng khi tạo: tác vụ nền truyền người đã tạo việc, lời gọi trong request
+    dùng người đang đăng nhập. Không có kết nối thì báo lỗi chứ không lặng lẽ dùng nhà cung cấp
+    khác (OpenAI yêu cầu không tự chuyển sang đường tính phí khác).
+    """
+
+    version = "chatgpt-plan-responses"
+
+    def __init__(self, user_id: str | None = None) -> None:
+        self.user_id = user_id or current_actor_id()
+        self.name = chatgpt_plan.model_for(self.user_id)
+
+    def complete_json(self, prompt: str, schema: type[SchemaT]) -> SchemaT:
+        payload = chatgpt_plan.plan_complete(
+            self.user_id,
+            prompt=prompt,
+            schema=schema.model_json_schema(),
+            system=SYSTEM_INSTRUCTIONS,
+            schema_name=schema.__name__.lower(),
+        )
+        report_usage(**usage_from_openai_responses(payload), prompt_chars=len(prompt))
+        return schema.model_validate(payload["output"])
+
+
 PROVIDERS: dict[str, type[BaseProvider]] = {
     "ollama": OllamaProvider,
     "openai": OpenAIProvider,
@@ -302,14 +330,19 @@ PROVIDERS: dict[str, type[BaseProvider]] = {
     "claude_code": ClaudeCodeProvider,
     "codex": CodexProvider,
     "antigravity": AntigravityProvider,
+    chatgpt_plan.PROVIDER_ID: ChatGPTPlanProvider,
 }
 
 
-def provider(name: str | None = None) -> LLMProvider:
+def provider(name: str | None = None, *, user_id: str | None = None) -> LLMProvider:
+    """`user_id`: người được tính quota khi dùng gói ChatGPT riêng (mặc định người đang gọi)."""
+
     provider_name = name or settings.ai_provider
     factory = PROVIDERS.get(provider_name)
     if not factory:
         raise HTTPException(422, f"Unsupported AI provider: {provider_name}")
+    if factory is ChatGPTPlanProvider:
+        return ChatGPTPlanProvider(user_id)
     return factory()
 
 
@@ -401,7 +434,11 @@ def provider_status(preflight: bool = False) -> list[dict[str, Any]]:
         "openrouter": secret_configured(settings.openrouter_api_key),
         "mistral": secret_configured(settings.mistral_api_key),
         **{provider_id: bridge_configured() for provider_id in CLI_PROVIDERS},
+        # Theo người đang xem: đã kết nối gói ChatGPT của chính họ hay chưa.
+        chatgpt_plan.PROVIDER_ID: chatgpt_plan.connection_ready(current_actor_id()),
     }
+    # Người đã nối gói ChatGPT và để mặc định: chat mới của họ ưu tiên gói đó.
+    plan_default = chatgpt_plan.default_provider_for(None) == chatgpt_plan.PROVIDER_ID
     reachable: dict[str, bool | None] = {provider_id: None for provider_id in PROVIDERS}
     if preflight:
         for provider_id in PROVIDERS:
@@ -416,8 +453,11 @@ def provider_status(preflight: bool = False) -> list[dict[str, Any]]:
             "configured": configured[provider_id],
             "reachable": reachable[provider_id],
             "active": provider_id == settings.ai_provider,
-            "chat_active": provider_id == settings.graph_chat_default_provider
-            and provider_id in {"openai", "deepseek", *CLI_PROVIDERS},
+            "chat_active": (
+                provider_id == settings.graph_chat_default_provider
+                and provider_id in {"openai", "deepseek", *CLI_PROVIDERS, chatgpt_plan.PROVIDER_ID}
+            )
+            or (provider_id == chatgpt_plan.PROVIDER_ID and plan_default),
             "model": factory().name,
         }
         for provider_id, factory in PROVIDERS.items()

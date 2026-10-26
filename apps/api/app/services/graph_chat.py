@@ -39,6 +39,7 @@ from app.schemas.chat import (
     ChatSummaryRequest,
     ChatTurnRead,
 )
+from app.services import chatgpt_plan
 from app.services.ai_usage import report_usage_dict
 from app.services.chatgpt_import import import_chatgpt_shared_snapshot
 from app.services.graph_changes import validate_change_set
@@ -366,7 +367,11 @@ def create_chat_session(db: Session, request: ChatSessionCreate) -> ChatSession:
             request.provider, api_key=request.personal_api_key, model=request.model_name
         )
         if request.credential_source == "personal"
-        else graph_chat_provider(request.provider or settings.graph_chat_default_provider)
+        else graph_chat_provider(
+            request.provider
+            or chatgpt_plan.default_provider_for(db)
+            or settings.graph_chat_default_provider
+        )
     )
     session = ChatSession(
         title=request.title or "Cuộc trao đổi mới",

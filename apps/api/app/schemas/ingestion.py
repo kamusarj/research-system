@@ -12,6 +12,7 @@ AIProviderName = Literal[
     "claude_code",
     "codex",
     "antigravity",
+    "chatgpt_plan",
 ]
 
 

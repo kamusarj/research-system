@@ -23,6 +23,7 @@ from app.schemas.ingestion import LinkClassification, LinkCreate, LinkReview, Tr
 from app.schemas.research import ResearchCreate
 from app.schemas.source import NormalizedSource, SourceEvidence
 from app.services.ai import PROVIDERS, provider
+from app.services.chatgpt_plan import ChatGPTPlanError, ensure_owner_spends
 from app.services.prompts import Source, injection_signals, task_prompt
 from app.services.research import create_research, get_research_or_404, transition
 from app.services.sources import adapter_for_url, normalize_url
@@ -306,7 +307,8 @@ def process_submission(db: Session, item: LinkSubmission) -> LinkSubmission:
 
         if len(content.strip()) >= 80:
             _set_stage(db, item, "analyzing")
-            runtime = provider(item.provider_name)
+            # Gói ChatGPT riêng tính vào người đã gửi link, kể cả khi người khác bấm thử lại.
+            runtime = provider(item.provider_name, user_id=item.submitted_by)
             prompt = task_prompt(
                 "Classify this source for an AI-agents-for-business research knowledge base. "
                 "Return grounded structured JSON only. Do not invent technologies or relations.",
@@ -405,6 +407,13 @@ def process_submission(db: Session, item: LinkSubmission) -> LinkSubmission:
 def _source_error(exc: Exception, stage: str | None = None) -> SourceError:
     if isinstance(exc, SourceError):
         return exc
+    if isinstance(exc, ChatGPTPlanError):
+        return SourceError(
+            exc.code,  # type: ignore[arg-type]
+            exc.message,
+            retryable=exc.retryable,
+            status_code=exc.status_code,
+        )
     if stage == "analyzing":
         if isinstance(exc, httpx.HTTPStatusError):
             status_code = exc.response.status_code
@@ -563,6 +572,7 @@ def enqueue_submission(
 ) -> LinkSubmission:
     if item.status != "failed":
         raise HTTPException(409, f"Submission cannot be retried in status {item.status}")
+    ensure_owner_spends(provider_name or item.provider_name, item.submitted_by)
     item.status = "pending"
     item.stage = "pending"
     item.review_status = "not_requested"

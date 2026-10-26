@@ -321,6 +321,10 @@ def graph_chat_provider(
 
     if name in CLI_PROVIDERS:
         return CliGraphChatProvider(name, api_key=api_key, model=model)
+    if name == "chatgpt_plan":
+        from app.services.providers.chatgpt_plan_chat import PlanGraphChatProvider
+
+        return PlanGraphChatProvider(api_key=api_key, model=model)
     providers: dict[str, type[OpenAIGraphChatProvider | DeepSeekGraphChatProvider]] = {
         "openai": OpenAIGraphChatProvider,
         "deepseek": DeepSeekGraphChatProvider,

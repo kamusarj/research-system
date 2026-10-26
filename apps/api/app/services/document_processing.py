@@ -32,6 +32,7 @@ from app.schemas.paper_fit import (
     PaperFitProviderAssessment,
 )
 from app.services.ai import PROVIDERS, provider
+from app.services.chatgpt_plan import ensure_owner_spends
 from app.services.document_graph import (
     ExtractedDocument,
     clear_document_graph,
@@ -98,7 +99,7 @@ def _provider_assessment(
     research: ResearchItem,
     extracted: ExtractedDocument,
 ):
-    runtime = provider(workspace.provider_name)
+    runtime = provider(workspace.provider_name, user_id=workspace.requested_by)
     pillars = list(
         db.scalars(
             select(KnowledgeNode.canonical_label)
@@ -628,6 +629,8 @@ def enqueue_document(
         )
     if provider_name and provider_name not in PROVIDERS:
         raise DocumentError("AI_PROVIDER_UNSUPPORTED", "Unsupported AI provider", 422)
+    chosen = provider_name or workspace.provider_name or settings.ai_provider
+    ensure_owner_spends(chosen, workspace.requested_by)
     workspace.processing_status = "queued"
     workspace.review_status = "not_requested"
     workspace.attempt_count = 0
@@ -636,7 +639,7 @@ def enqueue_document(
     workspace.finished_at = None
     workspace.error_code = None
     workspace.error_message = None
-    workspace.provider_name = provider_name or workspace.provider_name or settings.ai_provider
+    workspace.provider_name = chosen
     db.commit()
     db.refresh(workspace)
     return workspace

@@ -75,6 +75,7 @@ def main() -> None:
     compare_parser = subparsers.add_parser("research-eval-compare")
     compare_parser.add_argument("baseline")
     compare_parser.add_argument("candidate")
+    subparsers.add_parser("generate-fernet-key")
     usage_parser = subparsers.add_parser("ai-usage-report")
     usage_parser.add_argument("--since-hours", type=float, default=24.0)
     migration_parser = subparsers.add_parser("migrate-objects")
@@ -96,6 +97,12 @@ def main() -> None:
         baseline = json.loads(Path(args.baseline).read_text())
         candidate = json.loads(Path(args.candidate).read_text())
         print(compare_markdown(baseline, candidate))
+        return
+    if args.command == "generate-fernet-key":
+        from app.services.credentials_vault import generate_key
+
+        # In ra terminal của người chạy để chép vào .env; không ghi vào tệp hay log nào.
+        print(generate_key())
         return
     if args.command == "ai-usage-report":
         with SessionLocal() as db:

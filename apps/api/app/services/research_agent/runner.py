@@ -35,6 +35,11 @@ from app.models import (
 )
 from app.schemas.research import ResearchCreate
 from app.services.ai import provider
+from app.services.chatgpt_plan import (
+    ChatGPTPlanError,
+    default_provider_for,
+    ensure_owner_spends,
+)
 from app.services.ingestion import fetch_url
 from app.services.object_storage import DocumentError
 from app.services.prompts import Source, injection_signals, sanitize_untrusted, task_prompt
@@ -258,7 +263,10 @@ def create_run(
         question=" ".join(question.split()),
         variant=variant,
         config_json={**VARIANTS[variant], **({"cache_salt": cache_salt} if cache_salt else {})},
-        provider_name=settings.research_agent_provider or settings.ai_provider,
+        # Lượt eval chạy bằng cấu hình máy chủ; lượt của người dùng ưu tiên gói ChatGPT của họ.
+        provider_name=(default_provider_for(db, actor) if enforce_limits else None)
+        or settings.research_agent_provider
+        or settings.ai_provider,
         knowledge_gap_id=knowledge_gap_id,
         next_attempt_at=utcnow(),
         created_by=actor,
@@ -294,6 +302,7 @@ def request_cancel(db: Session, run: ResearchRun) -> ResearchRun:
 def retry_run(db: Session, run: ResearchRun) -> ResearchRun:
     if run.status != "failed":
         raise DocumentError("RESEARCH_RUN_STATE", "Chỉ thử lại được lượt đã thất bại", 409)
+    ensure_owner_spends(run.provider_name, run.created_by)
     active = db.scalar(
         select(func.count())
         .select_from(ResearchRun)
@@ -404,7 +413,7 @@ def advance_research_run(
     ctx = RunContext(
         db=db,
         run=run,
-        llm=llm or provider(run.provider_name),
+        llm=llm or provider(run.provider_name, user_id=run.created_by),
         providers=providers if providers is not None else providers_from_settings(db),
         fetch=fetch or default_fetch,
         flags={**VARIANTS["optimized"], **(run.config_json or {})},
@@ -590,6 +599,11 @@ def _llm_many(
 def _llm_one(ctx: RunContext, stage: str, prompt: str, schema: type[BaseModel]) -> BaseModel:
     [(output, error)] = _llm_many(ctx, stage, [prompt], schema)
     if error is not None:
+        if isinstance(error, ChatGPTPlanError):
+            # Hết hạn mức/chưa kết nối gói ChatGPT: thử lại không giúp gì, dừng với mã rõ ràng.
+            if error.retryable:
+                raise RetryableStageError(error.code, error.message) from error
+            raise StageFailed(error.code, error.message) from error
         if isinstance(error, (httpx.HTTPError, HTTPException)):
             raise RetryableStageError(
                 "AI_PROVIDER_UNAVAILABLE", "Nhà cung cấp AI tạm lỗi"

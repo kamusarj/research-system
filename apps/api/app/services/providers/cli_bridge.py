@@ -195,6 +195,16 @@ class CliGraphChatProvider:
         self.name = backend
         self.model = cli_model(backend)
 
+    def _ensure_available(self) -> None:
+        if not bridge_configured():
+            raise DocumentError("CHAT_PROVIDER_UNAVAILABLE", "AI CLI bridge is not configured", 503)
+
+    def _complete(self, prompt: str, schema: dict[str, Any], system: str) -> dict[str, Any]:
+        return bridge_complete(self.name, prompt=prompt, schema=schema, system=system)
+
+    def _clean_output(self, output: dict[str, Any]) -> dict[str, Any]:
+        return redact_credentials(output, provider=self.name)
+
     def respond(
         self,
         *,
@@ -204,8 +214,7 @@ class CliGraphChatProvider:
         metadata: dict[str, str],
     ) -> GraphProviderResponse:
         del metadata  # Không gửi định danh nghiệp vụ ra ngoài.
-        if not bridge_configured():
-            raise DocumentError("CHAT_PROVIDER_UNAVAILABLE", "AI CLI bridge is not configured", 503)
+        self._ensure_available()
         tool_names = [tool["name"] for tool in tools]
         system = instructions
         if tools:
@@ -215,9 +224,7 @@ class CliGraphChatProvider:
             f"{_render_transcript(input_items)}"
         )
         try:
-            payload = bridge_complete(
-                self.name, prompt=prompt, schema=_response_schema(tool_names), system=system
-            )
+            payload = self._complete(prompt, _response_schema(tool_names), system)
         except httpx.TimeoutException as exc:
             raise DocumentError(
                 "CHAT_PROVIDER_TIMEOUT", f"{self.name} chat request timed out", 504
@@ -233,7 +240,7 @@ class CliGraphChatProvider:
                 "CHAT_PROVIDER_FAILED", f"{self.name} returned an invalid chat response", 502
             ) from exc
 
-        output = redact_credentials(payload["output"], provider=self.name)
+        output = self._clean_output(payload["output"])
         tool_calls: list[GraphToolCall] = []
         for raw in output.get("tool_calls") or []:
             name = raw.get("name") if isinstance(raw, dict) else None
