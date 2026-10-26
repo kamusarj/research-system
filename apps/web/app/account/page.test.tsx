@@ -9,6 +9,9 @@ vi.mock("@/lib/auth", () => ({
   }),
 }));
 
+// Thẻ gói ChatGPT tự gọi API khi hiển thị; được kiểm thử riêng.
+vi.mock("@/components/chatgpt-plan-card", () => ({ ChatGPTPlanCard: () => null }));
+
 afterEach(() => vi.unstubAllGlobals());
 
 function fill(current: string, next: string, confirm: string) {

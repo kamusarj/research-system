@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
+import { ChatGPTPlanCard } from "@/components/chatgpt-plan-card";
 import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
 import { MIN_PASSWORD_LENGTH, changeOwnPassword } from "@/lib/members";
@@ -13,6 +14,14 @@ export default function AccountPage() {
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ type: "error" | "success"; text: string } | null>(null);
+  const [justConnected, setJustConnected] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("chatgpt") !== "connected") return;
+    setJustConnected(true);
+    window.history.replaceState(null, "", window.location.pathname);
+  }, []);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -42,6 +51,7 @@ export default function AccountPage() {
           {user && <p className="page-description">{user.email} · {t(`role${user.role[0].toUpperCase()}${user.role.slice(1)}`)}</p>}
         </div>
       </header>
+      <ChatGPTPlanCard justConnected={justConnected} />
       {!enabled ? (
         <p className="notice">Hệ thống đang chạy ở chế độ cục bộ không đăng nhập nên không có mật khẩu để đổi.</p>
       ) : (

@@ -21,6 +21,7 @@ import {
   listChatSessions,
   sendChatMessage,
 } from "@/lib/chat";
+import { CHATGPT_PLAN_PROVIDER, CHATGPT_USAGE_URL, providerLabel } from "@/lib/chatgpt-plan";
 import { useI18n } from "@/lib/i18n";
 import type { ChatScopeType, Provider } from "@/lib/types";
 
@@ -29,7 +30,7 @@ const MESSAGE_WINDOW = 20;
 const scopeTypes: ChatScopeType[] = ["graph", "pillar", "node", "document", "change_set", "gap"];
 const CHAT_SELECTION_MAX_CHARS = 6000;
 // AI hệ thống cho chat: API trả phí cùng các CLI dùng gói đăng nhập trên máy chủ.
-const systemChatProviders = ["deepseek", "openai", "claude_code", "codex", "antigravity"];
+const systemChatProviders = ["deepseek", "openai", "claude_code", "codex", "antigravity", CHATGPT_PLAN_PROVIDER];
 
 const starters = [
   { icon: "✧", title: "Phát triển ý tưởng", description: "Từ ý tưởng ban đầu đến hướng triển khai", prompt: "Tôi muốn phát triển một ý tưởng về tác nhân AI cho doanh nghiệp. Hãy giúp tôi làm rõ vấn đề, đối tượng sử dụng và cách kiểm chứng ý tưởng." },
@@ -173,7 +174,10 @@ function ChatWorkspace() {
   }
   useEffect(() => {
     if (provider && connectionOptions.some((item) => item.id === provider)) return;
-    const preferred = connectionOptions.find((item) => item.chat_active) ?? connectionOptions[0];
+    // Gói ChatGPT của chính người dùng (khi họ để mặc định) đứng trước AI mặc định của máy chủ.
+    const preferred = connectionOptions.find((item) => item.id === CHATGPT_PLAN_PROVIDER && item.chat_active)
+      ?? connectionOptions.find((item) => item.chat_active)
+      ?? connectionOptions[0];
     setProvider(preferred?.id ?? "");
   }, [connectionOptions, provider]);
   function captureChatSelection(messageId: string, container: HTMLElement) {
@@ -347,7 +351,7 @@ function ChatWorkspace() {
               <label>{t("title")}<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder={t("optionalTitle")} /></label>
               <label>{t("chatScope")}<select value={scopeType} onChange={(event) => setScopeType(event.target.value as ChatScopeType)}>{scopeTypes.map((value) => <option value={value} key={value}>{t(`chatScope.${value}`)}</option>)}</select></label>
               <label>Nguồn API<select value={credentialSource} onChange={(event) => setCredentialSource(event.target.value as "system" | "personal")}><option value="system">API của hệ thống</option><option value="personal">API cá nhân của tôi</option></select></label>
-              <label>{t("provider")}<select required value={provider} onChange={(event) => setProvider(event.target.value)}>{!connectionOptions.length && <option value="">Chưa có kết nối</option>}{connectionOptions.map((item) => <option value={item.id} key={item.id}>{item.id} · {item.model}</option>)}</select></label>
+              <label>{t("provider")}<select required value={provider} onChange={(event) => setProvider(event.target.value)}>{!connectionOptions.length && <option value="">Chưa có kết nối</option>}{connectionOptions.map((item) => <option value={item.id} key={item.id}>{providerLabel(item.id)} · {item.model}</option>)}</select></label>
               {credentialSource === "personal" && <button type="button" className="secondary" onClick={() => openApiSettings(provider)}>Thiết lập API cá nhân</button>}
               {scopeType !== "graph" && <label>{t("scopeId")}<input required value={scopeId} onChange={(event) => setScopeId(event.target.value)} placeholder={t("scopeIdHint")} /></label>}
               <button disabled={working || !provider}>{t("createChat")}</button>
@@ -358,7 +362,7 @@ function ChatWorkspace() {
               <p>{t("chatGPTImportHint")}</p>
               <label>{t("chatGPTSharedLink")}<input type="url" required value={importUrl} onChange={(event) => setImportUrl(event.target.value)} placeholder="https://chatgpt.com/share/…" /></label>
               <label>Nguồn API<select value={credentialSource} onChange={(event) => setCredentialSource(event.target.value as "system" | "personal")}><option value="system">API của hệ thống</option><option value="personal">API cá nhân của tôi</option></select></label>
-              <label>{t("provider")}<select required value={provider} onChange={(event) => setProvider(event.target.value)}>{!connectionOptions.length && <option value="">Chưa có kết nối</option>}{connectionOptions.map((item) => <option value={item.id} key={item.id}>{item.id} · {item.model}</option>)}</select></label>
+              <label>{t("provider")}<select required value={provider} onChange={(event) => setProvider(event.target.value)}>{!connectionOptions.length && <option value="">Chưa có kết nối</option>}{connectionOptions.map((item) => <option value={item.id} key={item.id}>{providerLabel(item.id)} · {item.model}</option>)}</select></label>
               {credentialSource === "personal" && <button type="button" className="secondary" onClick={() => openApiSettings(provider)}>Thiết lập API cá nhân</button>}
               <small>{t("chatGPTImportLocalOnly")}</small>
               <button disabled={working || !provider || !importUrl.trim()}>{working ? t("importingChat") : t("importChat")}</button>
@@ -373,7 +377,9 @@ function ChatWorkspace() {
                   <h2>{selected.title}</h2>
                   <div className="chat-thread-meta">
                     <span>Ngữ cảnh: {t(`chatScope.${selected.scope_type}`)}</span>
-                    <span className="chat-provider-name">{selected.provider_name}</span>
+                    {selected.provider_name === CHATGPT_PLAN_PROVIDER
+                      ? <span className="chat-provider-name chat-plan-badge">Đang dùng gói ChatGPT · <a href={CHATGPT_USAGE_URL} target="_blank" rel="noopener noreferrer">Quản lý mức dùng</a></span>
+                      : <span className="chat-provider-name">{selected.provider_name}</span>}
                     {selected.credential_source === "personal" && <span className="chat-personal-badge">API cá nhân · {selected.model_name}</span>}
                     <StatusBadge status={selected.status} />
                     {selected.source_type === "chatgpt_shared" && selected.source_url && (
@@ -418,7 +424,7 @@ function ChatWorkspace() {
               </div>
               {can("researcher") && <form className="chat-composer" onSubmit={send}>
                 <label className="sr-only" htmlFor="chat-message">{t("chatMessage")}</label>
-                {selected.status !== "active" ? <p className="chat-composer-status">Cuộc trò chuyện đã kết thúc. <button type="button" className="secondary" onClick={openNewChat}>Bắt đầu cuộc trò chuyện mới</button></p> : !selectedConnectionReady && !providers.isLoading && <p className="chat-composer-status">{selected.credential_source === "personal" ? "Nhập lại API key của bạn để tiếp tục. Hệ thống không lưu khóa cá nhân." : "AI của cuộc trò chuyện này chưa được cấu hình."} <button type="button" className="secondary" onClick={() => selected.credential_source === "personal" ? openApiSettings(selected.provider_name) : openNewChat()}>{selected.credential_source === "personal" ? "Nhập lại API key" : "Chọn AI khác"}</button></p>}
+                {selected.status !== "active" ? <p className="chat-composer-status">Cuộc trò chuyện đã kết thúc. <button type="button" className="secondary" onClick={openNewChat}>Bắt đầu cuộc trò chuyện mới</button></p> : !selectedConnectionReady && !providers.isLoading && <p className="chat-composer-status">{selected.credential_source === "personal" ? "Nhập lại API key của bạn để tiếp tục. Hệ thống không lưu khóa cá nhân." : selected.provider_name === CHATGPT_PLAN_PROVIDER ? <>Gói ChatGPT của bạn chưa kết nối hoặc phiên đã hết hạn. <Link href="/account">Kết nối trong trang Tài khoản</Link>.</> : "AI của cuộc trò chuyện này chưa được cấu hình."} <button type="button" className="secondary" onClick={() => selected.credential_source === "personal" ? openApiSettings(selected.provider_name) : openNewChat()}>{selected.credential_source === "personal" ? "Nhập lại API key" : "Chọn AI khác"}</button></p>}
                 <textarea ref={composerRef} id="chat-message" rows={2} value={draft} disabled={selected.status !== "active" || working || !selectedConnectionReady} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder="Hỏi một câu, chia sẻ ý tưởng hoặc yêu cầu phân tích…" maxLength={12000} />
                 <div>
                   <span className="chat-keyboard-hint">Enter để gửi · Shift + Enter xuống dòng</span><span className="chat-character-count">{draft.length.toLocaleString("vi-VN")} / 12.000</span>
