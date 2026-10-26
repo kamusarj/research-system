@@ -98,6 +98,19 @@ systemctl --user restart business-ai-agents.service
 
 Cầu nối `apps/api/app/ai_cli_bridge.py` chỉ nghe `172.17.0.1:11436` và đòi Bearer token. Claude Code chạy không có công cụ nào; Codex và Antigravity (vốn luôn có công cụ) chạy trong bubblewrap chỉ thấy tệp đăng nhập của chính nó, không thấy thư mục home, repo hay `.env`. Model mặc định nhẹ: `CLAUDE_CODE_MODEL=sonnet`, `CODEX_MODEL=gpt-6-luna` (`CODEX_EFFORT=low`), `ANTIGRAVITY_MODEL=gemini-3.8-flash-medium`. Thử nhanh một backend trên máy: `python3 -I apps/api/app/ai_cli_bridge.py probe codex`. Embedding RAG không qua CLI mà dùng API: Mistral hoặc Gemini (`SEARCH_EMBEDDING_PROVIDER`). Tác vụ nền tiêu quota của gói lập trình; tối đa 2 lượt CLI chạy song song.
 
+### Mỗi người dùng tự dùng gói ChatGPT của mình
+
+Người dùng có ChatGPT Plus/Pro vào **Tài khoản → Dùng gói ChatGPT của bạn → Tiếp tục với ChatGPT**, đồng ý tại OpenAI ("Sign in with ChatGPT"). Từ đó việc AI họ khởi chạy (gửi link, tải tài liệu, nghiên cứu sâu, chat) gọi model bằng token của chính họ và tính vào hạn mức gói của họ; giới hạn riêng cho ứng dụng đặt ở [ChatGPT → Cài đặt → Mức sử dụng](https://chatgpt.com/settings/usage). Hết hạn mức thì việc dừng với thông báo rõ, không tự chuyển sang khóa API của máy chủ. Embedding vẫn dùng API của máy chủ.
+
+```bash
+docker compose exec api python -m app.operations generate-fernet-key   # chép vào .env
+# .env: CHATGPT_PLAN_ENABLED=true, CREDENTIALS_ENCRYPTION_KEY=<khóa vừa tạo>
+```
+
+- **Chế độ cục bộ** (để trống `CHATGPT_PLAN_CLIENT_ID`): ứng dụng tự đăng ký với OpenAI, callback bắt buộc là `http://127.0.0.1:18000/auth/callback`, nên chỉ kết nối được từ trình duyệt trên chính máy chạy hệ thống (không qua tunnel điện thoại).
+- **Bản web cho nhóm**: điền [form đối tác của OpenAI](https://openai.com/form/sign-in-with-chatgpt-interest/); khi được cấp client ID, đặt `CHATGPT_PLAN_CLIENT_ID`, `CHATGPT_PLAN_CLIENT_SECRET` (nếu có) và `CHATGPT_PLAN_REDIRECT_URI=<PUBLIC_URL>/account/ai/callback` (callback đăng ký với OpenAI). Production từ chối khởi động nếu bật mà thiếu client ID.
+- Token chỉ lưu mã hóa trong DB, không vào log/trình duyệt; "Ngắt kết nối" thu hồi quyền tại OpenAI. Việc nền tính vào người tạo việc; việc dùng gói của người khác chỉ người đó chạy lại được. Quyết định: `docs/decisions/0052-per-user-chatgpt-plan.md`.
+
 ## Triển khai cho nhóm nghiên cứu
 
 Chế độ ở trên là cục bộ một người dùng, không đăng nhập. Để cả nhóm dùng chung qua HTTPS với tài khoản

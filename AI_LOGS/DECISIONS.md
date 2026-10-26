@@ -1078,3 +1078,14 @@
   nguồn; CSP; che chuỗi giống khóa trong đầu ra AI; scope `research:run`/`research:read`.
 - Quyết định đầy đủ: `docs/decisions/0051-research-agent-and-hardening.md`.
 
+## DEC-065 - Mỗi người dùng tự kết nối gói ChatGPT của mình (Sign in with ChatGPT)
+
+- Ngày: 2026-10-27; Harness intake #14 / high-risk `US-CHATGPT-PLAN-CONNECT` / decision 0052.
+- Nhà cung cấp `chatgpt_plan`: OAuth PKCE + OIDC tới `auth.openai.com`, gọi Responses API bằng
+  access token của chính người dùng (`store=false`, `stream=true`), tính vào hạn mức gói Plus/Pro.
+- Không có client ID = chế độ cục bộ (tự đăng ký, callback `127.0.0.1`); bản web cần client ID do
+  OpenAI cấp qua form đối tác. Tắt mặc định (`CHATGPT_PLAN_ENABLED`), cần `CREDENTIALS_ENCRYPTION_KEY`.
+- Token chỉ lưu mã hóa Fernet; `state` một lần, gắn với người bắt đầu; việc nền tính vào người tạo
+  việc; gói của ai chỉ người đó chạy lại được; không tự chuyển sang khóa máy chủ khi hết hạn mức.
+- Quyết định đầy đủ: `docs/decisions/0052-per-user-chatgpt-plan.md`.
+
