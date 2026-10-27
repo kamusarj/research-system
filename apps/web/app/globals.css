@@ -2011,6 +2011,16 @@ box-shadow: var(--shadow-xs);
   box-shadow: 0 4px 14px rgba(94, 79, 220, .3);
 }
 .graph-studio .graph-toolbar-actions { position: relative; z-index: 1; justify-content: flex-end; }
+/* Bố cục thanh công cụ theo bề rộng của chính khung đồ thị: trên desktop thanh bên đã chiếm chỗ,
+   nên ở 1280px ba cột cân đối làm nhóm nút bên phải tràn xuống dưới bộ chuyển bố cục. */
+.graph-studio { container: graph-studio / inline-size; }
+@container graph-studio (max-width: 1220px) {
+  .graph-studio .graph-toolbar { grid-template-columns: minmax(150px, 1fr) auto auto; }
+}
+@container graph-studio (max-width: 940px) {
+  .graph-studio .graph-toolbar { grid-template-columns: minmax(150px, 1fr) auto; }
+  .graph-studio .graph-toolbar-actions { grid-column: 1 / -1; justify-content: flex-start; overflow-x: auto; }
+}
 .graph-studio .graph-toolbar-btn {
   min-height: 30px;
   padding: .34rem .58rem;
@@ -3031,7 +3041,6 @@ a.table-row:hover { background: var(--surface-hover); box-shadow: inset 3px 0 0 
     display: flex;
     width: 254px;
     height: 100dvh;
-    min-height: 680px;
     flex-direction: column;
     align-items: stretch;
     gap: 0;
@@ -3052,8 +3061,14 @@ a.table-row:hover { background: var(--surface-hover); box-shadow: inset 3px 0 0 
     flex-direction: column;
     align-items: stretch;
     gap: 1.15rem;
+    /* Màn hình thấp (laptop 720px, chủ sở hữu có thêm nhóm Quản trị): chỉ danh sách mục cuộn,
+       logo và cụm tài khoản/Đăng xuất luôn nằm trong khung nhìn. */
+    min-height: 0;
     margin: 1.25rem 0;
-    overflow: visible;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, .18) transparent;
   }
   .topnav-group { display: grid; align-items: stretch; gap: .22rem; }
   .topnav-group-label {
