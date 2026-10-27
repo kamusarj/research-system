@@ -137,7 +137,8 @@ test("Business AI Agents system map renders on its separate route", async ({ pag
       mainWidth: document.querySelector("main")!.getBoundingClientRect().width,
       canvasWidth: document.querySelector<HTMLElement>('[data-testid="graph-canvas"]')!
         .getBoundingClientRect().width,
-      viewportWidth: window.innerWidth,
+      // Cột nội dung cạnh thanh điều hướng cố định: đồ thị phải chiếm gần hết cột này.
+      contentWidth: document.querySelector<HTMLElement>("div.main")!.getBoundingClientRect().width,
       overflow: document.documentElement.scrollWidth - window.innerWidth,
     };
   });
@@ -147,8 +148,8 @@ test("Business AI Agents system map renders on its separate route", async ({ pag
   expect(foregroundLayer.pointerEvents).toBe("none");
   expect(foregroundLayer.sourceVisibility).toBe("hidden");
   expect(foregroundLayer.strokeWidth).toBeGreaterThanOrEqual(2.5);
-  expect(foregroundLayer.mainWidth / foregroundLayer.viewportWidth).toBeGreaterThanOrEqual(0.9);
-  expect(foregroundLayer.canvasWidth / foregroundLayer.viewportWidth).toBeGreaterThanOrEqual(0.9);
+  expect(foregroundLayer.mainWidth / foregroundLayer.contentWidth).toBeGreaterThanOrEqual(0.9);
+  expect(foregroundLayer.canvasWidth / foregroundLayer.contentWidth).toBeGreaterThanOrEqual(0.9);
   expect(foregroundLayer.overflow).toBeLessThanOrEqual(1);
 
   await page.locator('.d3-node[data-node-id="system-pillar"]').dispatchEvent("click");

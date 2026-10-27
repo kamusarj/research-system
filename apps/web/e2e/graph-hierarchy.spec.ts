@@ -126,13 +126,14 @@ test("research graph uses progressive hierarchy and focused relationships", asyn
     const studio = document.querySelector<HTMLElement>(".graph-studio")!;
     return {
       studioWidth: studio.getBoundingClientRect().width,
-      viewportWidth: window.innerWidth,
+      // Cột nội dung cạnh thanh điều hướng cố định của desktop.
+      contentWidth: document.querySelector<HTMLElement>("div.main")!.getBoundingClientRect().width,
       overflow: document.documentElement.scrollWidth - window.innerWidth,
     };
   });
   expect(viewportGeometry.overflow).toBeLessThanOrEqual(1);
   if (testInfo.project.name === "desktop-chrome") {
-    expect(viewportGeometry.studioWidth / viewportGeometry.viewportWidth).toBeGreaterThanOrEqual(.95);
+    expect(viewportGeometry.studioWidth / viewportGeometry.contentWidth).toBeGreaterThanOrEqual(.95);
   }
   await expect.poll(
     () => graphRequests.filter((request) => request.split("?")[0].endsWith("/graph")).length,
