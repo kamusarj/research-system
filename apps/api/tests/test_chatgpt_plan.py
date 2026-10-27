@@ -619,3 +619,9 @@ def test_signing_in_with_a_different_account_revokes_the_new_session(client, db,
     assert response.json()["error"]["code"] == "CHATGPT_PLAN_ACCOUNT_MISMATCH"
     assert fake.revoked and fake.revoked[-1]["client_id"] == [ISSUED]
     assert decrypt_json(stored(db).encrypted_tokens)["access_token"] == "at-1"
+
+
+def test_blank_compose_values_keep_the_defaults():
+    configured = Settings(chatgpt_plan_reasoning_effort="", chatgpt_plan_client_id="")
+    assert configured.chatgpt_plan_reasoning_effort is None
+    assert configured.chatgpt_plan_local_mode

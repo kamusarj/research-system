@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Tên dịch vụ trong mạng Compose và địa chỉ loopback: trình duyệt của kẻ tấn công không thể khiến
@@ -248,6 +248,12 @@ class Settings(BaseSettings):
         env_file=".env",
         extra="ignore",
     )
+
+    @field_validator("chatgpt_plan_reasoning_effort", mode="before")
+    @classmethod
+    def _blank_effort_is_default(cls, value):
+        # docker compose truyền biến chưa đặt dưới dạng chuỗi rỗng.
+        return None if isinstance(value, str) and not value.strip() else value
 
     @model_validator(mode="after")
     def load_secret_files_and_validate_deployment(self) -> "Settings":
