@@ -2,6 +2,16 @@
 
 ## Now
 
+Gói ChatGPT riêng (2026-10-27, `US-CHATGPT-PLAN-CONNECT`): mã, test và runtime cục bộ đã xong.
+
+- [ ] Linh thử thật: mở `http://localhost:13000/account` **trên chính máy chủ** → "Tiếp tục với
+  ChatGPT" → đồng ý → tạo một cuộc chat với "Gói ChatGPT của tôi". Báo lại nếu OpenAI từ chối.
+- [ ] Linh điền form đối tác https://openai.com/form/sign-in-with-chatgpt-interest/ để có client ID
+  cho bản web; khi có: đặt `CHATGPT_PLAN_CLIENT_ID`, `CHATGPT_PLAN_CLIENT_SECRET`,
+  `CHATGPT_PLAN_REDIRECT_URI=<PUBLIC_URL>/account/ai/callback`.
+- [ ] (Tùy chọn) chế độ bắt buộc gói riêng cho việc do người dùng khởi chạy (máy chủ không trả AI).
+- [ ] Kiểm tra lại khóa `OPENAI_API_KEY` (preflight không phản hồi) và Ollama (không chạy).
+
 Tối ưu toàn diện (2026-10-24, `US-OPTIMIZATION-PROGRAM`): mã đã xong; còn các bước sau.
 
 - [ ] Linh tạo chủ sở hữu cục bộ (`make local-owner NAME=... EMAIL=...`), rồi agent đặt
@@ -13,7 +23,7 @@ Tối ưu toàn diện (2026-10-24, `US-OPTIMIZATION-PROGRAM`): mã đã xong; c
 - [ ] Container API/worker chạy non-root, mount mã chỉ đọc, cài cầu nối CLI ngoài cây mã (S9).
 - [ ] Thu hẹp sandbox cầu nối CLI: lọc keyring cho agy, không cho shell Codex đọc `auth.json` (S7).
 - [ ] Giảm token pipeline nghiên cứu (eval: +42% so với naive do kiểm tra suy luận); `/chat` mobile
-  Lighthouse 81; chạy bộ Playwright E2E trên stack thử nghiệm riêng.
+  Lighthouse 81. (E2E trên stack cô lập đã chạy 2026-10-27: 84/84.)
 - [ ] Push nhánh `feature/research-system-mvp` khi Linh đồng ý.
 
 Triển khai cho nhóm (2026-10-14): mã, cấu hình và runbook đã sẵn sàng; còn các bước của chủ sở hữu.

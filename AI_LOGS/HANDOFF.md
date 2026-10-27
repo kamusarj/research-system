@@ -2,6 +2,21 @@
 
 ## Current Goal
 
+- Ngày 2026-10-27 thêm việc **mỗi người dùng tự kết nối gói ChatGPT Plus/Pro** (Sign in with ChatGPT
+  + ChatGPT plan usage; Harness intake #14 / high-risk `US-CHATGPT-PLAN-CONNECT` / DEC-065 / decision
+  0052). Nhà cung cấp `chatgpt_plan`: OAuth PKCE + OIDC tới `auth.openai.com`, token mã hóa Fernet
+  (`CREDENTIALS_ENCRYPTION_KEY`), Responses streaming tính vào gói của người tạo việc (nền) hoặc người
+  đang thao tác (chat/sửa tài liệu). UI: thẻ ở `/account`, `/account/ai/callback`, lựa chọn trong chat.
+  Runtime cục bộ **đã bật** (`CHATGPT_PLAN_ENABLED=true`, khóa trong `.env`, migration
+  `7d9f1b3c5e68`, sao lưu `~/business-ai-agents-backups/pre-chatgpt-plan-*`), chế độ cục bộ: chỉ kết
+  nối được từ trình duyệt trên máy chủ (callback `127.0.0.1:18000`). Bản web cần client ID do OpenAI
+  cấp (Linh điền form). Chưa thử với tài khoản ChatGPT thật.
+  Vòng kiểm thử toàn hệ thống cùng ngày (4 vòng): API 570, web 199, bot 56, E2E 84/84 trên stack cô lập (sửa 2
+  lỗi UI có từ trước: nút "Khám phá" bị che ở 1280px, nút Đăng xuất ngoài khung nhìn trên màn hình
+  thấp), audit 0, gitleaks 0, 44 kiểm tra trực tiếp runtime. Lưu ý: `/` còn ~3–4 GB; tạo lại frontend
+  thì `docker exec businessaiagents-tunnel-gate nginx -s reload`.
+  Session: `AI_LOGS/SESSIONS/2026-10-27-0100-chatgpt-plan-connect.md`.
+
 - Ngày 2026-10-24 hoàn tất chương trình tối ưu toàn diện research/UI/bảo mật (Harness intake #13 /
   high-risk `US-OPTIMIZATION-PROGRAM` / DEC-064 / decision 0051), 36 commit trên
   `feature/research-system-mvp` sau snapshot `dce73d7` (chưa push). Chính:
