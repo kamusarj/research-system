@@ -10,4 +10,5 @@ regexTarget = "match"
 regexes = [
   '''PASSWORD_ALPHABET = "[A-Za-z0-9]+"''',
   '''DISCORD_INTAKE_NAMESPACE=discord''',
+  '''businessaiagents-api:pre-hardening-20261103''',
 ]

@@ -5,6 +5,7 @@ khớp sau khi chuẩn hóa dấu nháy/gạch/hoa-thường, hoặc khớp gầ
 điều kiện mọi con số trong trích dẫn đều xuất hiện nguyên vẹn.
 """
 
+import json
 import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -32,6 +33,63 @@ class QuoteMatch:
     end: int
     method: str  # exact | normalized | fuzzy
     score: float
+
+
+@dataclass(frozen=True)
+class EntailmentWindow:
+    claim_id: str
+    source_id: str
+    claim: str
+    quote: str
+    start: int
+    end: int
+
+
+def compact_entailment_payload(
+    windows: list[EntailmentWindow], source_texts: dict[str, str]
+) -> str:
+    """Share overlapping source context without dropping any original evidence.
+
+    Groups remain source-specific. Each claim keeps its own quote; disjoint
+    passages stay separate. Use legacy rows whenever grouping would cost more.
+    """
+
+    def encode(value: object) -> str:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+    grouped: dict[str, list[EntailmentWindow]] = {}
+    for window in windows:
+        grouped.setdefault(window.source_id, []).append(window)
+    output = []
+    for source_id, claims in grouped.items():
+        text = source_texts[source_id]
+        legacy = "\n".join(
+            encode(
+                {
+                    "claim_id": row.claim_id,
+                    "claim": row.claim,
+                    "evidence": text[row.start : row.end],
+                }
+            )
+            for row in claims
+        )
+        intervals: list[list[int]] = []
+        for row in sorted(claims, key=lambda row: row.start):
+            if intervals and row.start <= intervals[-1][1]:
+                intervals[-1][1] = max(intervals[-1][1], row.end)
+            else:
+                intervals.append([row.start, row.end])
+        shared = encode(
+            {
+                "evidence": [text[start:end] for start, end in intervals],
+                "claims": [
+                    {"claim_id": row.claim_id, "claim": row.claim, "quote": row.quote}
+                    for row in claims
+                ],
+            }
+        )
+        output.append(shared if len(shared) < len(legacy) else legacy)
+    return "\n".join(output)
 
 
 def _normalize_token(token: str) -> str:

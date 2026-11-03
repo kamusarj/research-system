@@ -1,0 +1,47 @@
+{
+  "variant": "optimized",
+  "results": [
+    {
+      "id": "q2-customer-service",
+      "variant": "optimized",
+      "status": "completed",
+      "error_code": null,
+      "wall_time_s": 97.7,
+      "llm_calls": 8,
+      "llm_cache_hits": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 107598,
+      "prompt_chars": 152686,
+      "citation_coverage": 1.0,
+      "cited_sentences": 18,
+      "quote_verification_rate": 0.788,
+      "claims_verified": 23,
+      "duplicates_removed_rate": 0.0,
+      "cited_duplicate_rate": 0.0,
+      "sources_cited": 9,
+      "unique_domains": 8,
+      "perspective_coverage": 1.0,
+      "entity_recall": 0.4
+    }
+  ],
+  "summary": {
+    "runs": 1,
+    "completed": 1,
+    "completion_rate": 1.0,
+    "wall_time_s": 97.7,
+    "llm_calls": 8,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "total_tokens": 107598,
+    "prompt_chars": 152686,
+    "citation_coverage": 1.0,
+    "quote_verification_rate": 0.788,
+    "cited_duplicate_rate": 0.0,
+    "sources_cited": 9,
+    "unique_domains": 8,
+    "perspective_coverage": 1.0,
+    "entity_recall": 0.4
+  },
+  "scope": "One native Codex q2 smoke; not a baseline comparison or whole-pipeline cost acceptance."
+}

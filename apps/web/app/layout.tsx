@@ -1,9 +1,24 @@
 import type { Metadata, Viewport } from "next";
+import localFont from "next/font/local";
 import "@fontsource-variable/inter";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
 import { THEME_BOOT_SCRIPT } from "@/lib/theme";
 import { Providers } from "./providers";
+
+const interLatin = localFont({
+  src: "../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2",
+  variable: "--font-inter-latin", weight: "100 900", display: "swap", adjustFontFallback: false,
+});
+const interVietnamese = localFont({
+  src: "../node_modules/@fontsource-variable/inter/files/inter-vietnamese-wght-normal.woff2",
+  variable: "--font-inter-vietnamese", weight: "100 900", display: "swap", adjustFontFallback: false,
+});
+const interExtended = localFont({
+  src: "../node_modules/@fontsource-variable/inter/files/inter-latin-ext-wght-normal.woff2",
+  variable: "--font-inter-extended", weight: "100 900", display: "swap", adjustFontFallback: false,
+  preload: false,
+});
 
 export const metadata: Metadata = {
   title: "Hệ thống nghiên cứu",
@@ -25,7 +40,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
       </head>
-      <body><Providers><AppShell>{children}</AppShell></Providers></body>
+      <body className={`${interLatin.variable} ${interVietnamese.variable} ${interExtended.variable}`}>
+        <Providers><AppShell>{children}</AppShell></Providers>
+      </body>
     </html>
   );
 }

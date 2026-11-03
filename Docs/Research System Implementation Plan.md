@@ -40,6 +40,12 @@
 > Xem `docs/decisions/0046-ephemeral-personal-chat-api.md` và
 > `docs/decisions/0047-personal-chat-model-validation.md`.
 
+> Cập nhật 2026-11-03: runtime cục bộ đã bật owner/auth và nghiên cứu bounded có trích dẫn;
+> API/worker không đặc quyền, cầu nối CLI được cô lập, backup tự động có kiểm tra restore.
+> Chat đã tối ưu tải ban đầu/lịch sử; verifier giữ đầy đủ bằng chứng khi gộp và cache.
+> Chưa có tên miền nhóm; nghiệm thu sản phẩm, credential bên ngoài và KPI chi phí toàn pipeline
+> vẫn là các mục riêng. Trạng thái hiện tại ở `AI_LOGS/HANDOFF.md`, lịch sử ở session logs.
+
 ---
 
 ## 1. Mục tiêu triển khai

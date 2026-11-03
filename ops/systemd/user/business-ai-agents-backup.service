@@ -1,0 +1,11 @@
+[Unit]
+Description=Verified Business AI Agents database and document backup
+After=business-ai-agents.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I "@INSTALL_DIR@/backup_local.py" --repo "@REPO_DIR@"
+UMask=0077
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=600

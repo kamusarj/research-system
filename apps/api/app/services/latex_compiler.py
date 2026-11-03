@@ -9,6 +9,20 @@ from app.core.config import settings
 from app.services.object_storage import DocumentError
 
 LATEX_FILE_ERROR = re.compile(r"(?:^|/)document\.tex:(\d+):\s*([^\r\n]+)")
+CGROUP_PIDS_MAX = Path("/sys/fs/cgroup/pids.max")
+
+
+def latex_process_limit_args() -> list[str]:
+    # RLIMIT_NPROC counts threads of the host UID across containers. With multiple
+    # non-root API workers it can prevent XeTeX from starting xdvipdfmx even while
+    # this container has ample capacity. Use the enforced container task limit
+    # when it is at most 256; retain the legacy per-UID limit elsewhere.
+    try:
+        if 0 < int(CGROUP_PIDS_MAX.read_text().strip()) <= 256:
+            return []
+    except (OSError, ValueError):
+        pass
+    return ["--nproc=32"]
 
 
 def latex_failure_message(output: str) -> str:
@@ -54,7 +68,7 @@ def compile_latex(source: str) -> bytes:
                     "--as=805306368",
                     "--fsize=12582912",
                     "--nofile=64",
-                    "--nproc=32",
+                    *latex_process_limit_args(),
                     "--",
                     command,
                     "-no-shell-escape",

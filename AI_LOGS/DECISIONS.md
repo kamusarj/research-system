@@ -1050,7 +1050,8 @@
   `gemini-3.8-flash-medium`. Embedding RAG vẫn dùng Mistral.
 - An toàn với nội dung không tin cậy: Claude Code chạy không có công cụ; Codex và Antigravity chạy
   trong bubblewrap chỉ thấy tệp đăng nhập của chính nó (Codex: đúng `~/.codex/auth.json`; agy:
-  keyring qua `xdg-dbus-proxy --talk=org.freedesktop.secrets`), môi trường không có API key.
+  keyring trước đây qua xdg-dbus-proxy; được thay bằng broker scoped trong DEC-067), môi trường
+  không có API key.
 - Chế độ nhóm luôn tắt cầu nối: gói đăng ký là cá nhân, dùng chung cho nhóm là chia sẻ tài khoản.
 - Quyết định đầy đủ: `docs/decisions/0049-subscription-cli-ai-bridge.md`.
 
@@ -1089,3 +1090,31 @@
   việc; gói của ai chỉ người đó chạy lại được; không tự chuyển sang khóa máy chủ khi hết hạn mức.
 - Quyết định đầy đủ: `docs/decisions/0052-per-user-chatgpt-plan.md`.
 
+## DEC-066 - Container không đặc quyền, mã chỉ đọc và quyền volume tương thích
+
+- Ngày: 2026-11-03; Harness intake #15 / `US-CONTAINER-RUNTIME-HARDENING` / decision 0053.
+- Hoàn tất phần follow-up DEC-064: API/worker UID/GID 10001, bỏ capabilities, không nâng quyền,
+  root filesystem/mã nguồn chỉ đọc; volume tài liệu và `/tmp` có giới hạn là vùng ghi.
+- Init root một lần chỉ có volume tài liệu và CHOWN/DAC_OVERRIDE, không mạng/secret; giữ nguyên
+  nội dung/mode, không theo symlink, lỗi thì chặn startup. Khóa file mount dùng GID 10001/0640.
+- PID/thread cgroup 256 cho mỗi ứng dụng, 64 cho init. LaTeX dùng ranh giới cgroup ≤256 khi có;
+  ngoài ranh giới đó giữ `--nproc=32`, giữ nguyên các giới hạn tài nguyên và shell-escape guard.
+  Điều này tránh lỗi khi non-root worker chung UID có tổng số luồng lớn hơn 32.
+- Quyết định đầy đủ: `docs/decisions/0053-unprivileged-container-runtime.md`.
+
+
+## DEC-067 - Hoàn thiện local và thu hẹp quyền CLI
+
+- Ngày: 2026-11-03; intake #16 / `US-REMAINING-LOCAL-READINESS` / decision 0054.
+- User cho phép tự tạo owner, chưa có tên miền: bật local auth và nghiên cứu bounded, credential
+  chỉ trong tệp riêng 0600 ngoài repo. Không giả lập key, client ID hay OAuth consent.
+- Codex tắt shell/unified exec/subagent; agy chỉ có Secret Service broker cho credential riêng,
+  chặn foreign/mixed/session/write. Bridge cài 0500 ngoài repo; refresh tuần tự mỗi backend.
+- Backup timer 02:30, quiesce API/worker, manifest hash, retention14 chỉ backup do script tạo;
+  đã diễn tập restore tách biệt. Offsite cần đích do người dùng cung cấp.
+- Chat prefetch theo phiên/no-store, Markdown server + lazy parser, hydration window8 và nạp
+  lịch sử cũ khi cần. Giờ UTC lần render đầu, giờ địa phương sau hydration.
+- Verifier gộp evidence không mất nội dung, batch40, cache verdict theo nguồn/quote/model/owner
+  24h; thiếu hoặc xung đột verdict thì kiểm tra lại và fail closed. Không bỏ verifier để giảm token.
+- Bản vá pypdf6.21.4 được khóa và chạy trong API/worker; không force downgrade công cụ npm.
+- Quyết định đầy đủ: `docs/decisions/0054-local-readiness-and-credential-boundaries.md`.

@@ -1,0 +1,10 @@
+[Unit]
+Description=Business AI Agents daily backup at 02:30 local time
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+Unit=business-ai-agents-backup.service
+
+[Install]
+WantedBy=timers.target

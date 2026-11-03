@@ -182,14 +182,21 @@ x-app-environment: &app-environment
 services:
   ollama-bridge:
     profiles: ["local-ai"]
+    image: ${COMPOSE_PROJECT_NAME:-businessaiagents}-api
     build: ./apps/api
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
     network_mode: host
     environment:
       OLLAMA_BRIDGE_UPSTREAM: ${OLLAMA_BRIDGE_UPSTREAM:-http://127.0.0.1:11434}
       OLLAMA_BRIDGE_BIND: ${OLLAMA_BRIDGE_BIND:-172.17.0.1}
       OLLAMA_BRIDGE_PORT: ${OLLAMA_BRIDGE_PORT:-11435}
     volumes:
-      - ./apps/api:/app
+      - ./apps/api:/app:ro
     command: sh -c "uvicorn app.ollama_bridge:app --host $${OLLAMA_BRIDGE_BIND} --port $${OLLAMA_BRIDGE_PORT}"
 
   database:
@@ -276,21 +283,48 @@ services:
       timeout: 5s
       retries: 20
 
+  # Chỉ chuẩn bị quyền của volume dữ liệu cũ/mới, không có mạng hay cấu hình bí mật.
+  # API/worker chỉ khởi động khi bước này hoàn tất; tiến trình ứng dụng luôn chạy non-root.
+  document-storage-init:
+    image: ${COMPOSE_PROJECT_NAME:-businessaiagents}-api
+    pull_policy: never
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE]
+    pids_limit: 64
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - document_objects:/var/lib/research-system/objects
+    command: [python, -m, app.prepare_storage]
+    restart: "no"
+
   api:
+    image: ${COMPOSE_PROJECT_NAME:-businessaiagents}-api
     build: ./apps/api
     restart: unless-stopped
     # Tiến trình init thu dọn tiến trình con mồ côi (xelatex/tesseract) và chuyển tiếp tín hiệu dừng.
     init: true
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    pids_limit: 256
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m,mode=1777
     environment: *app-environment
     depends_on:
       database:
         condition: service_healthy
+      document-storage-init:
+        condition: service_completed_successfully
     ports:
       # Chỉ nghe trên máy chủ: với AUTH_MODE=disabled, mở ra LAN là trao quyền owner cho mọi máy
       # cùng mạng. Đặt API_BIND=0.0.0.0 chỉ khi đã bật đăng nhập và thật sự cần truy cập từ LAN.
       - "${API_BIND:-127.0.0.1}:${API_PORT:-8000}:8000"
     volumes:
-      - ./apps/api:/app
+      - ./apps/api:/app:ro
       - document_objects:/var/lib/research-system/objects
     healthcheck:
       test:
@@ -315,14 +349,23 @@ services:
     build: ./apps/api
     restart: unless-stopped
     init: true
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    pids_limit: 256
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m,mode=1777
     environment: *app-environment
     depends_on:
       database:
         condition: service_healthy
       api:
         condition: service_started
+      document-storage-init:
+        condition: service_completed_successfully
     volumes:
-      - ./apps/api:/app
+      - ./apps/api:/app:ro
       - document_objects:/var/lib/research-system/objects
     command: python -m app.worker
 

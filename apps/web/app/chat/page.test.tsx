@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import ChatPage from "./page";
+import ChatPage from "./chat-workspace";
 import { createChatSession, importChatGPTSharedChat, sendChatMessage } from "@/lib/chat";
 import type { ChatMessage, ChatSession } from "@/lib/types";
 
@@ -41,9 +41,9 @@ const assistant: ChatMessage = {
   created_at: "2026-07-18T00:00:00Z",
 };
 const refetch = vi.fn().mockResolvedValue(undefined);
-const authTest = vi.hoisted(() => ({ user: { id: "user-a" } }));
-vi.mock("@/lib/auth", () => ({ useAuth: () => ({ user: authTest.user, can: () => true }) }));
-afterEach(() => { assistant.error_code = null; session.credential_source = "system"; authTest.user = { id: "user-a" }; });
+const authTest = vi.hoisted(() => ({ user: { id: "user-a" } as { id: string } | null, loading: false }));
+vi.mock("@/lib/auth", () => ({ useAuth: () => ({ user: authTest.user, loading: authTest.loading, can: () => true }) }));
+afterEach(() => { assistant.error_code = null; session.credential_source = "system"; authTest.user = { id: "user-a" }; authTest.loading = false; });
 
 vi.mock("@/lib/chat", () => ({
   listChatSessions: vi.fn(),
@@ -81,7 +81,7 @@ it("shows local chat proposals and sends a bounded brainstorm turn", async () =>
   render(<ChatPage />);
 
   await waitFor(() => expect(screen.getAllByText("Agent governance").length).toBeGreaterThan(0));
-  expect(screen.getByText("I prepared a governed evaluator proposal.")).toBeInTheDocument();
+  expect(await screen.findByText("I prepared a governed evaluator proposal.")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /reviewKnowledgeChanges/ })).toHaveAttribute(
     "href",
     "/graph/changes/change-set-1",
@@ -175,7 +175,7 @@ it("explains historical provider failures without rendering raw upstream text", 
 
 async function enterPersonalApi() {
   fireEvent.click(screen.getByRole("button", { name: "API của tôi" }));
-  fireEvent.change(screen.getByLabelText("Nhà cung cấp API"), { target: { value: "deepseek" } });
+  fireEvent.change(await screen.findByLabelText("Nhà cung cấp API"), { target: { value: "deepseek" } });
   const key = screen.getByLabelText("API key cá nhân");
   expect(key).toHaveAttribute("type", "password");
   fireEvent.change(key, { target: { value: "synthetic-browser-api-key" } });
@@ -236,4 +236,20 @@ it("forgets a configured key without closing or deleting the conversation", asyn
   fireEvent.click(screen.getByRole("button", { name: "Quay lại trò chuyện" }));
   expect(screen.getByLabelText("chatMessage")).toBeDisabled();
   expect(screen.getByText("I prepared a governed evaluator proposal.")).toBeInTheDocument();
+});
+
+it("keeps server-authenticated hydration stable but clears drafts on a real account switch", async () => {
+  authTest.user = null;
+  authTest.loading = true;
+  const initial = { userId: "user-a", sessions: { items: [session], total: 1 },
+    providers: [], selectedId: session.id, messages: [assistant] };
+  const page = render(<ChatPage initial={initial} />);
+  fireEvent.change(await screen.findByLabelText("chatMessage"), { target: { value: "Hydration draft" } });
+  authTest.user = { id: "user-a" };
+  authTest.loading = false;
+  page.rerender(<ChatPage initial={initial} />);
+  expect(screen.getByLabelText("chatMessage")).toHaveValue("Hydration draft");
+  authTest.user = { id: "user-b" };
+  page.rerender(<ChatPage initial={initial} />);
+  expect(screen.getByLabelText("chatMessage")).toHaveValue("");
 });

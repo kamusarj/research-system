@@ -7,6 +7,7 @@ import pytest
 from app.core.config import settings
 from app.models import (
     AICallMetric,
+    AIOutput,
     ResearchItem,
     ResearchRun,
     ResearchRunClaim,
@@ -131,8 +132,10 @@ class FakeLLM:
         if schema.__name__ == "EntailmentBatch":
             body = SOURCE_BLOCK.findall(prompt)[0][2]
             judgements = [
-                {"claim_id": json.loads(line)["claim_id"], "verdict": "supported"}
+                {"claim_id": row["claim_id"], "verdict": "supported"}
                 for line in body.splitlines()
+                for parsed in [json.loads(line)]
+                for row in parsed.get("claims", [parsed])
             ]
             return schema.model_validate({"judgements": judgements})
         if schema.__name__ == "ReportDraft":
@@ -675,3 +678,104 @@ def test_irrelevant_search_hits_and_off_topic_pages_are_dropped(db, agent_enable
     assert run.status == "failed"
     assert run.error_code == "NO_READABLE_SOURCES"
     assert run.metrics_json["sources_off_topic"] > 0
+
+
+def test_individual_verdict_cache_survives_a_new_batch(db, agent_enabled):
+    first, _, _, _ = run_to_completion(db, runner.create_run(db, "AI agents có cần giám sát?"))
+    assert first.status == "completed"
+    assert db.query(AIOutput).filter_by(task="research-agent.entail-claim").count() > 0
+    # Remove whole-call caches: the second run must reuse independently keyed verdicts.
+    db.query(AIOutput).filter(AIOutput.task != "research-agent.entail-claim").delete()
+    db.commit()
+    second, llm, _, _ = run_to_completion(
+        db, runner.create_run(db, "AI agents có cần giám sát?", enforce_limits=False)
+    )
+    assert second.status == "completed"
+    assert "EntailmentBatch" not in llm.calls
+    assert second.metrics_json["entailment_cache_hits"] > 0
+    assert second.metrics_json["cited_sentences"] > 0
+    assert second.metrics_json["uncited_sentences"] == 0
+
+
+def test_verdict_cache_does_not_survive_model_version_change(db, agent_enabled):
+    first, _, _, _ = run_to_completion(db, runner.create_run(db, "AI agents cho vận hành?"))
+    assert first.status == "completed"
+    changed = FakeLLM()
+    changed.version = "new-model-version"
+    second, llm, _, _ = run_to_completion(
+        db, runner.create_run(db, "AI agents cho vận hành?", enforce_limits=False), llm=changed
+    )
+    assert second.status == "completed"
+    assert "EntailmentBatch" in llm.calls
+    assert second.metrics_json.get("entailment_cache_hits", 0) == 0
+
+
+def test_invalid_cached_verdict_is_never_treated_as_support(db, agent_enabled):
+    first, _, _, _ = run_to_completion(db, runner.create_run(db, "AI agents dùng trong kế toán?"))
+    assert first.status == "completed"
+    db.query(AIOutput).filter(AIOutput.task != "research-agent.entail-claim").delete()
+    for row in db.query(AIOutput).filter_by(task="research-agent.entail-claim"):
+        row.output_json = {"verdict": "untrusted-unknown-status"}
+    db.commit()
+    second, llm, _, _ = run_to_completion(
+        db, runner.create_run(db, "AI agents dùng trong kế toán?", enforce_limits=False)
+    )
+    assert second.status == "completed"
+    assert "EntailmentBatch" in llm.calls
+    assert second.metrics_json.get("entailment_cache_hits", 0) == 0
+
+
+def test_entailment_cache_separates_quote_positions_and_personal_plan_owners():
+    from types import SimpleNamespace
+
+    context = SimpleNamespace(
+        run=SimpleNamespace(provider_name="chatgpt_plan", created_by="owner-a"),
+        llm=SimpleNamespace(name="model", version="v1"),
+        salt="",
+    )
+    claim = SimpleNamespace(
+        text="A supported fact",
+        matched_quote="quoted words",
+        quote="quoted words",
+        start_offset=10,
+        end_offset=22,
+    )
+    original = runner._entailment_claim_key(context, claim, "source text")
+    claim.start_offset = 100
+    assert runner._entailment_claim_key(context, claim, "source text") != original
+    claim.start_offset = 10
+    context.run.created_by = "owner-b"
+    assert runner._entailment_claim_key(context, claim, "source text") != original
+
+
+def test_conflicting_verdict_cache_requires_fresh_judgements(db, agent_enabled):
+    first, _, _, _ = run_to_completion(db, runner.create_run(db, "AI agents và quyền kiểm soát?"))
+    assert first.status == "completed"
+    for cached in db.query(AIOutput).filter_by(task="research-agent.entail-claim").all():
+        db.add(
+            AIOutput(
+                task=cached.task,
+                model_name=cached.model_name,
+                model_version=cached.model_version,
+                prompt_version=cached.prompt_version,
+                input_hash=cached.input_hash,
+                output_json={"verdict": "not_supported"},
+                confidence=0,
+            )
+        )
+    db.commit()
+
+    class SilentJudge(FakeLLM):
+        def complete_json(self, prompt, schema):
+            if schema.__name__ == "EntailmentBatch":
+                self.calls.append(schema.__name__)
+                return schema.model_validate({"judgements": []})
+            return super().complete_json(prompt, schema)
+
+    second, llm, _, _ = run_to_completion(
+        db,
+        runner.create_run(db, "AI agents và quyền kiểm soát?", enforce_limits=False),
+        llm=SilentJudge(),
+    )
+    assert "EntailmentBatch" in llm.calls
+    assert second.status == "failed" and second.error_code == "NO_VERIFIED_CLAIMS"

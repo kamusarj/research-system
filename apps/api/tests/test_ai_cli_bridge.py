@@ -226,6 +226,8 @@ def test_codex_runs_sandboxed_with_a_strict_schema(config, monkeypatch):
     assert "--output-schema" in argv
     assert argv[argv.index("--sandbox") + 1] == "read-only"
     assert "--ignore-user-config" in argv
+    disabled = {argv[index + 1] for index, value in enumerate(argv) if value == "--disable"}
+    assert {"shell_tool", "unified_exec", "multi_agent", "multi_agent_v2"} <= disabled
     assert completion.output == {"label": "x", "tags": []}
     assert completion.usage["total_tokens"] == 1234
 

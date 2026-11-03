@@ -32,3 +32,34 @@ test.describe("authenticated role experience", () => {
     expect(overflow).toBeLessThanOrEqual(1);
   });
 });
+
+test.describe("authenticated server chat history", () => {
+  test.use({ timezoneId: "Pacific/Honolulu" });
+  test.skip(!ownerEmail || !password || !process.env.E2E_CHAT_HISTORY,
+    "requires a disposable database with the 24-message SSR history fixture");
+
+  test("hydrates across time zones and fetches older messages on demand", async ({ page }) => {
+    await signIn(page, ownerEmail!);
+    const failures: string[] = [];
+    const messageRequests: string[] = [];
+    page.on("pageerror", (error) => failures.push(error.name));
+    page.on("request", (request) => {
+      if (/\/chat\/sessions\/[^/]+\/messages$/.test(request.url())) messageRequests.push(request.method());
+    });
+    await page.goto("/chat");
+    await expect(page.getByText("SSR history fixture 24", { exact: true })).toBeVisible();
+    await expect(page.locator("[data-chat-message-id]")).toHaveCount(8);
+    await page.waitForLoadState("networkidle");
+    expect(messageRequests).toHaveLength(0);
+    await expect(page.locator("[data-chat-message-id] time").first()).toHaveText("14:00");
+    const older = page.getByRole("button", { name: /tin nhắn cũ hơn/ });
+    await older.click();
+    await expect(page.locator("[data-chat-message-id]")).toHaveCount(16);
+    expect(messageRequests).toEqual(["GET"]);
+    await older.click();
+    await expect(page.locator("[data-chat-message-id]")).toHaveCount(24);
+    await expect(older).toHaveCount(0);
+    expect(messageRequests).toEqual(["GET"]);
+    expect(failures).toEqual([]);
+  });
+});

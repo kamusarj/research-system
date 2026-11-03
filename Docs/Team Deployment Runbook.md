@@ -61,6 +61,25 @@ chmod 600 .env.team
 `.env.team` đã nằm trong `.gitignore`. Không chép giá trị bí mật vào `AI_LOGS/` hay tài liệu.
 Mọi biến trong `.env.example` đều dùng được trong `.env.team` khi cần đổi mặc định.
 
+API/worker chạy UID/GID `10001:10001`, hệ tệp gốc và mã nguồn chỉ đọc, không capabilities hay nâng
+quyền. Chỉ named volume tài liệu và `/tmp` tmpfs (512 MiB mỗi container) được ghi. Khi khởi động,
+`document-storage-init` chạy một lần để chuẩn bị quyền volume cũ/mới, không đổi nội dung/mode và
+không theo symlink. Bước này không có mạng, biến môi trường hoặc secret của ứng dụng.
+
+API/worker giới hạn 256 tiến trình/luồng mỗi container (init: 64). LaTeX dùng giới hạn cgroup
+hữu hạn này để tránh xung đột với số luồng API theo cùng UID; các giới hạn CPU/RAM/tệp/timeout
+và chế độ không shell escape vẫn được giữ.
+
+Nếu dùng `/run/secrets` qua Compose bind-mount, tệp trên máy chủ phải cho GID 10001 đọc. Giữ owner
+là root hoặc chủ sở hữu, đặt nhóm 10001 và mode `0640` (thư mục chứa vẫn riêng tư); không dùng
+`0644`/`0777`. Compose local không áp dụng `uid`/`gid` khai báo trong secret khi nguồn là file.
+Ví dụ, với một đường dẫn do người vận hành chọn:
+
+```bash
+sudo chgrp 10001 /duong-dan-rieng/openai_api_key
+sudo chmod 0640 /duong-dan-rieng/openai_api_key
+```
+
 Kiểm tra cấu hình: `make team-config`.
 
 ## 4. Chọn lối vào HTTPS
@@ -167,6 +186,23 @@ make team-down                   # dừng (không xóa dữ liệu)
 
 Cập nhật phiên bản mới: lấy mã mới rồi `make team-up` (migration chạy tự động khi API khởi động).
 
+Trên máy thiếu đĩa, có thể tái sử dụng ảnh dependency đã kiểm chứng, còn chạy root. Nếu lockfile
+đã đổi (ví dụ bản vá Python), cập nhật package trên lớp TeX/OCR cũ trước khi build runtime:
+
+```bash
+docker build --target refresh-dependencies \
+  --build-arg API_REUSE_BASE=businessaiagents-api:verified-root-base \
+  -t businessaiagents-api-dependencies:verified apps/api
+docker compose build --build-arg API_DEPENDENCIES_IMAGE=businessaiagents-api-dependencies:verified api worker
+```
+
+Tên `verified-root-base` phải là ảnh có sẵn đã kiểm chứng; không gắn nhãn này cho runtime non-root.
+Ảnh dependency đầu ra phải có SHA-256 của `/app/uv.lock` trùng `apps/api/uv.lock` và
+`python -m pip check` sạch. Build mặc định vẫn cài dependency từ lockfile;
+không tái sử dụng ảnh runtime đã tạo tài khoản 10001 làm dependency base. Trước khi áp dụng, chạy
+`bash scripts/verify_container_hardening.sh` với ảnh mới; tùy chọn `--live` kiểm tra thêm hai
+container cục bộ (chỉ tạo/xóa fixture tạm).
+
 ## 8. Sao lưu và khôi phục
 
 ```bash
@@ -176,11 +212,20 @@ make team-backup
 Tạo `~/business-ai-agents-backups/<thời-điểm>/` (quyền 700) gồm `postgres.dump` (định dạng custom,
 đã kiểm tra bằng `pg_restore --list`) và `document-objects.tar.gz`; giữ 14 bản gần nhất. Tùy chọn:
 `BACKUP_DIR=/đường/dẫn`, `BACKUP_KEEP=30`, `BACKUP_QUIESCE=1` (dừng API/worker trong lúc sao lưu để
-có ảnh chụp nhất quán tuyệt đối). Lên lịch hằng đêm bằng cron của người dùng:
+có ảnh chụp nhất quán). Cài timer người dùng cho cả local hoặc team:
 
-```cron
-30 2 * * * cd "$HOME/Desktop/Business AI Agents" && scripts/team.sh backup >> "$HOME/business-ai-agents-backups/backup.log" 2>&1
+```bash
+scripts/install_backup_timer.sh
+systemctl --user start business-ai-agents-backup.service  # chạy thử ngay
+systemctl --user list-timers business-ai-agents-backup.timer
+loginctl enable-linger "$USER"  # cho phép timer chạy cả khi đăng xuất
 ```
+
+Timer chạy 02:30 giờ máy, chạy bù sau khi bật máy. Script cài ngoài repo, dừng API/worker đang chạy,
+kiểm tra dump/tar, ghi manifest SHA-256 rồi khởi động lại đúng các dịch vụ đó cả khi gặp lỗi.
+Thư mục `~/business-ai-agents-backups/scheduled/` chỉ giữ 14 bản hoàn tất do script này tạo;
+không xóa bản thủ công. Xem lỗi bằng `journalctl --user -u business-ai-agents-backup.service`.
+Nếu đổi mã script, chạy lại installer. Không cài thêm cron trùng lịch.
 
 Sao chép thư mục sao lưu ra ổ/dịch vụ khác. Khóa API nằm trong `.env.team`/secret, cần sao lưu riêng.
 
@@ -191,7 +236,7 @@ C="docker compose --env-file .env.team -f docker-compose.yml -f docker-compose.t
 B=~/business-ai-agents-backups/<thời-điểm>
 $C stop api worker frontend
 $C exec -T database sh -c 'pg_restore --clean --if-exists --no-owner -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < $B/postgres.dump
-$C run --rm --no-deps -T --entrypoint tar worker -C /var/lib/research-system/objects -xzf - < $B/document-objects.tar.gz
+$C run --rm --no-deps -T --entrypoint tar worker --no-same-owner --no-same-permissions -C /var/lib/research-system/objects -xzf - < $B/document-objects.tar.gz
 $C up -d --wait
 make team-verify
 ```

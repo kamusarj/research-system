@@ -68,6 +68,7 @@ class BridgeConfig:
     bwrap_bin: str = "/usr/bin/bwrap"
     dbus_proxy_bin: str = "/usr/bin/xdg-dbus-proxy"
     codex_auth_file: Path = HOME / ".codex/auth.json"
+    keyring_proxy_script: Path = Path(__file__).with_name("ai_cli_keyring_proxy.py")
     default_models: dict[str, str] = field(
         default_factory=lambda: {
             "claude_code": "sonnet",
@@ -430,7 +431,7 @@ def sandbox_argv(
 
 
 class DbusSecretsProxy:
-    """Proxy D-Bus chỉ cho phép nói chuyện với keyring (nơi Antigravity giữ phiên đăng nhập)."""
+    """Private Secret Service that exposes only Antigravity's own credential."""
 
     def __init__(self, config: BridgeConfig, directory: Path):
         self.config = config
@@ -438,21 +439,20 @@ class DbusSecretsProxy:
         self.process: subprocess.Popen[bytes] | None = None
 
     def __enter__(self) -> DbusSecretsProxy:
-        address = os.getenv("DBUS_SESSION_BUS_ADDRESS") or f"unix:path=/run/user/{os.getuid()}/bus"
         self.process = subprocess.Popen(
             [
-                self.config.dbus_proxy_bin,
-                address,
+                sys.executable,
+                "-I",
+                str(self.config.keyring_proxy_script),
+                "--socket",
                 str(self.socket),
-                "--filter",
-                "--talk=org.freedesktop.secrets",
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
         deadline = time.monotonic() + 5
-        while not self.socket.exists():
+        while not self.socket.with_suffix(".ready").exists():
             if self.process.poll() is not None or time.monotonic() > deadline:
                 self.__exit__(None, None, None)
                 raise BridgeError("CLI_UNAVAILABLE", 503, "Keyring proxy could not start")
@@ -460,12 +460,19 @@ class DbusSecretsProxy:
         return self
 
     def __exit__(self, *_: object) -> None:
-        if self.process and self.process.poll() is None:
-            self.process.terminate()
+        if self.process:
             try:
-                self.process.wait(timeout=2)
+                os.killpg(self.process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                self.process.wait(timeout=3)
             except subprocess.TimeoutExpired:
-                self.process.kill()
+                try:
+                    os.killpg(self.process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                self.process.wait()
 
 
 # --- Backends -----------------------------------------------------------------------------
@@ -482,6 +489,7 @@ class Runner:
     def __init__(self, config: BridgeConfig):
         self.config = config
         self.slots = threading.BoundedSemaphore(max(1, config.max_concurrency))
+        self.backend_locks = {backend: threading.Lock() for backend in BACKENDS}
 
     def binary(self, backend: str) -> str:
         return {
@@ -500,14 +508,21 @@ class Runner:
             return False
         if backend == "codex":
             return self.config.codex_auth_file.is_file()
-        return os.access(self.config.dbus_proxy_bin, os.X_OK)
+        return self.config.keyring_proxy_script.is_file()
 
     def complete(self, request: CompletionRequest) -> Completion:
         if not self.available(request.backend):
             raise BridgeError("CLI_UNAVAILABLE", 503, "CLI is not installed or not logged in")
         if not self.slots.acquire(timeout=self.config.queue_seconds):
             raise BridgeError("CLI_BUSY", 503, "All CLI slots are busy")
+        backend_locked = False
         try:
+            # Token refresh and native HOME state must not race within one provider.
+            backend_locked = self.backend_locks[request.backend].acquire(
+                timeout=self.config.queue_seconds
+            )
+            if not backend_locked:
+                raise BridgeError("CLI_BUSY", 503, "CLI backend is busy")
             backend_dir = self.config.state_dir / request.backend
             home = backend_dir / "home"
             home.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -521,6 +536,8 @@ class Runner:
                 }[request.backend]
                 return method(request, home, workdir)
         finally:
+            if backend_locked:
+                self.backend_locks[request.backend].release()
             self.slots.release()
 
     def _model(self, request: CompletionRequest) -> str:
@@ -625,6 +642,13 @@ class Runner:
             str(output_file),
         ]
         for feature in (
+            "shell_tool",
+            "unified_exec",
+            "multi_agent",
+            "multi_agent_v2",
+            "view_image",
+            "skill_search",
+            "memories",
             "computer_use",
             "browser_use",
             "browser_use_external",

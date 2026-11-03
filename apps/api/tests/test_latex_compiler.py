@@ -3,8 +3,29 @@ from pathlib import Path
 
 import pytest
 
-from app.services.latex_compiler import compile_latex, latex_failure_message
+from app.services.latex_compiler import (
+    compile_latex,
+    latex_failure_message,
+    latex_process_limit_args,
+)
 from app.services.object_storage import DocumentError
+
+
+@pytest.mark.parametrize("limit", ["64", "256"])
+def test_latex_uses_enforced_container_task_limit(tmp_path, monkeypatch, limit):
+    maximum = tmp_path / "pids.max"
+    maximum.write_text(limit)
+    monkeypatch.setattr("app.services.latex_compiler.CGROUP_PIDS_MAX", maximum)
+    assert latex_process_limit_args() == []
+
+
+@pytest.mark.parametrize("limit", ["max", "0", "-1", "512", "invalid", None])
+def test_latex_retains_uid_limit_without_small_container_bound(tmp_path, monkeypatch, limit):
+    maximum = tmp_path / "pids.max"
+    if limit is not None:
+        maximum.write_text(limit)
+    monkeypatch.setattr("app.services.latex_compiler.CGROUP_PIDS_MAX", maximum)
+    assert latex_process_limit_args() == ["--nproc=32"]
 
 
 def test_compile_latex_returns_bounded_pdf(monkeypatch):

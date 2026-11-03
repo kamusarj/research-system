@@ -24,6 +24,9 @@ x-team-environment: &team-environment
   AI_CLI_BRIDGE_TOKEN: ""
 
 services:
+  document-storage-init:
+    image: businessaiagents-team-api:latest
+
   database:
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Đặt POSTGRES_PASSWORD trong .env.team}

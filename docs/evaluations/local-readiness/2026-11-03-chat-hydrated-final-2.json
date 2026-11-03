@@ -1,0 +1,121 @@
+{
+  "date": "2026-11-03T09:05:16.773Z",
+  "version": "13.5.0",
+  "phase": "hydrated-final-2",
+  "performance": 0.91,
+  "accessibility": 0.98,
+  "audits": {
+    "first-contentful-paint": {
+      "score": 0.93,
+      "value": 1661.7510000000002,
+      "display": "1.7 s"
+    },
+    "largest-contentful-paint": {
+      "score": 0.69,
+      "value": 3311.751,
+      "display": "3.3 s"
+    },
+    "speed-index": {
+      "score": 0.97,
+      "value": 2573.027995999897,
+      "display": "2.6 s"
+    },
+    "total-blocking-time": {
+      "score": 1,
+      "value": 37,
+      "display": "40 ms"
+    },
+    "max-potential-fid": {
+      "score": 0.98,
+      "value": 87,
+      "display": "90 ms"
+    },
+    "cumulative-layout-shift": {
+      "score": 1,
+      "value": 0.002679069325375672,
+      "display": "0.003"
+    },
+    "server-response-time": {
+      "score": 1,
+      "value": 105,
+      "display": "Root document took 110 ms"
+    },
+    "interactive": {
+      "score": 0.94,
+      "value": 3311.751,
+      "display": "3.3 s"
+    },
+    "redirects": {
+      "score": 1,
+      "value": 0,
+      "display": ""
+    },
+    "mainthread-work-breakdown": {
+      "score": 1,
+      "value": 1741.3439999999991,
+      "display": "1.7 s"
+    },
+    "bootup-time": {
+      "score": 1,
+      "value": 294.4720000000001,
+      "display": "0.3 s"
+    },
+    "network-rtt": {
+      "score": 1,
+      "value": 0.44399999999999995,
+      "display": "0 ms"
+    },
+    "network-server-latency": {
+      "score": 1,
+      "value": 3.917,
+      "display": "0 ms"
+    },
+    "metrics": {
+      "score": 1,
+      "value": 3312
+    },
+    "heading-order": {
+      "score": 0
+    },
+    "total-byte-weight": {
+      "score": 1,
+      "value": 440355,
+      "display": "Total size was 430 KiB"
+    },
+    "unminified-css": {
+      "score": 1,
+      "value": 0,
+      "display": ""
+    },
+    "unminified-javascript": {
+      "score": 1,
+      "value": 0,
+      "display": ""
+    },
+    "unused-css-rules": {
+      "score": 0,
+      "value": 150,
+      "display": "Est savings of 24 KiB"
+    },
+    "unused-javascript": {
+      "score": 1,
+      "value": 0,
+      "display": ""
+    },
+    "dom-size-insight": {
+      "score": 1,
+      "value": 878
+    },
+    "forced-reflow-insight": {
+      "score": 0
+    },
+    "legacy-javascript-insight": {
+      "score": 0.5,
+      "display": "Est savings of 12 KiB"
+    },
+    "render-blocking-insight": {
+      "score": 0,
+      "display": "Est savings of 320 ms"
+    }
+  }
+}

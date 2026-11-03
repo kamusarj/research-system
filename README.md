@@ -35,6 +35,12 @@ Nếu các cổng trên máy đã được dùng, có thể đổi cổng ngoài
 API_PORT=18000 FRONTEND_PORT=13000 API_CORS_ORIGINS=http://localhost:13000 docker compose up --build
 ```
 
+API/worker chạy bằng UID/GID `10001:10001`, mã nguồn và hệ tệp gốc chỉ đọc. Dữ liệu tài liệu nằm
+trong named volume; `document-storage-init` chuẩn bị quyền trước khi ứng dụng chạy, giữ nguyên
+nội dung/mode của tệp cũ. `/tmp` là vùng ghi tạm có giới hạn 512 MiB. Kiểm tra bằng
+`bash scripts/verify_container_hardening.sh` (dùng volume/DB thử riêng, không gọi AI).
+Nếu dùng khóa qua file mount, xem quyền GID 10001 tại `Docs/Team Deployment Runbook.md`.
+
 ### Tự khởi động sau khi đăng nhập máy
 
 Máy này lưu kho mã tại `$HOME/Desktop/Business AI Agents`. Chính sách `unless-stopped` của Docker khôi phục container hiện có khi daemon khởi động. Dịch vụ người dùng bên dưới sẽ thử bật lại bốn dịch vụ lõi sau khi phiên desktop bắt đầu, với giao diện ở cổng `13000` và API ở cổng `18000`:
@@ -88,7 +94,7 @@ docker compose --profile local-ai up -d --build ollama-bridge api worker
 
 ### Dùng quota Claude Code, Codex hoặc Antigravity thay cho API
 
-Nếu máy đã đăng nhập `claude`, `codex` hoặc `agy` bằng gói đăng ký, API/worker có thể dùng quota đó thay cho API trả phí (chỉ chế độ cục bộ một chủ máy; chế độ nhóm luôn tắt, xem DEC-062). Cần `bubblewrap` và `xdg-dbus-proxy` trên máy:
+Nếu máy đã đăng nhập `claude`, `codex` hoặc `agy` bằng gói đăng ký, API/worker có thể dùng quota đó thay cho API trả phí (chỉ chế độ cục bộ một chủ máy; chế độ nhóm luôn tắt, xem DEC-062/067). Cần `bubblewrap`, `dbus-daemon`, Python hệ thống có `dbus` và `gi` (Ubuntu: `python3-dbus`, `python3-gi`) trên máy:
 
 ```bash
 scripts/install_ai_cli_bridge.sh   # cài user service, tạo token, ghi AI_CLI_BRIDGE_URL/TOKEN vào .env
@@ -96,7 +102,18 @@ scripts/install_ai_cli_bridge.sh   # cài user service, tạo token, ghi AI_CLI_
 systemctl --user restart business-ai-agents.service
 ```
 
-Cầu nối `apps/api/app/ai_cli_bridge.py` chỉ nghe `172.17.0.1:11436` và đòi Bearer token. Claude Code chạy không có công cụ nào; Codex và Antigravity (vốn luôn có công cụ) chạy trong bubblewrap chỉ thấy tệp đăng nhập của chính nó, không thấy thư mục home, repo hay `.env`. Model mặc định nhẹ: `CLAUDE_CODE_MODEL=sonnet`, `CODEX_MODEL=gpt-6-luna` (`CODEX_EFFORT=low`), `ANTIGRAVITY_MODEL=gemini-3.8-flash-medium`. Thử nhanh một backend trên máy: `python3 -I apps/api/app/ai_cli_bridge.py probe codex`. Embedding RAG không qua CLI mà dùng API: Mistral hoặc Gemini (`SEARCH_EMBEDDING_PROVIDER`). Tác vụ nền tiêu quota của gói lập trình; tối đa 2 lượt CLI chạy song song.
+Cầu nối chỉ nghe `172.17.0.1:11436` và đòi Bearer token. Installer chép mã vào
+`~/.local/lib/business-ai-agents/ai-cli-bridge/` (0500); systemd chạy bản này ngoài repo. Khi đổi mã,
+chạy lại installer. Claude Code không có công cụ; Codex tắt shell/exec/subagent, cả Codex và agy
+chạy trong bubblewrap, không thấy home/repo/`.env`. Codex chỉ gắn đúng tệp auth để refresh;
+agy chỉ đọc/làm mới credential riêng qua broker Secret Service, không có quyền toàn keyring.
+Kiểm tra ranh giới bằng `python3 scripts/verify_cli_isolation.py --codex-canary`.
+
+Model mặc định nhẹ: `CLAUDE_CODE_MODEL=sonnet`, `CODEX_MODEL=gpt-6-luna` (`CODEX_EFFORT=low`),
+`ANTIGRAVITY_MODEL=gemini-3.8-flash-medium`. Thử nhanh backend: `python3 -I
+apps/api/app/ai_cli_bridge.py probe codex`. Embedding RAG dùng API: Mistral hoặc Gemini
+(`SEARCH_EMBEDDING_PROVIDER`). Tối đa 2 lượt CLI song song; từng backend tuần tự để không tranh
+refresh phiên. Tác vụ nền tiêu quota gói CLI đã đăng nhập.
 
 ### Mỗi người dùng tự dùng gói ChatGPT của mình
 
@@ -356,6 +373,11 @@ docker compose exec api python -m app.operations create-user \
 ```
 
 Với bản triển khai nhóm, dùng `make team-up`/`make team-owner` theo mục “Triển khai cho nhóm nghiên cứu”; chủ sở hữu quản lý tài khoản ở `/members`, mỗi người tự đổi mật khẩu ở `/account`. Đăng nhập sai liên tiếp bị giới hạn theo từng tài khoản và theo IP; các giới hạn tần suất khác tính theo từng người dùng.
+
+Sao lưu tự động cục bộ/nhóm: chạy `scripts/install_backup_timer.sh`, rồi
+`systemctl --user start business-ai-agents-backup.service` để thử. Timer chạy 02:30 giờ máy,
+giữ 14 bản trong `~/business-ai-agents-backups/scheduled/` và tạm dừng API/worker để chụp dữ liệu
+nhất quán. Khôi phục và sao chép ra ngoài máy theo [runbook](Docs/Team%20Deployment%20Runbook.md).
 
 Mật khẩu được băm bằng Argon2. Xác thực trình duyệt dùng phiên mờ có thể thu hồi trong cookie HttpOnly, SameSite và một token CSRF riêng; hệ thống chỉ lưu mã băm token phiên. Các vai trò là `owner`, `researcher`, `viewer`; API thực thi phân quyền bên cạnh việc ẩn điều khiển không phù hợp trên giao diện. Cấu hình staging/production từ chối khởi động nếu tắt xác thực, dùng cookie phiên không an toàn hoặc thiếu tiền tố `__Host-`. Bản triển khai chịu trách nhiệm về HTTPS và bắt buộc dùng khi bật cookie an toàn.
 

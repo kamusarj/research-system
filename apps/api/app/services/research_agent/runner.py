@@ -46,6 +46,8 @@ from app.services.prompts import Source, injection_signals, sanitize_untrusted, 
 from app.services.research import create_research
 from app.services.research_agent.evidence import (
     MIN_QUOTE_TOKENS,
+    EntailmentWindow,
+    compact_entailment_payload,
     match_quote,
     unsupported_numbers,
 )
@@ -100,7 +102,7 @@ STAGE_LABELS = {
 PROMPT_VERSIONS = {
     "plan": "research-plan-v1",
     "extract": "research-extract-v1",
-    "entail": "research-entail-v1",
+    "entail": "research-entail-v2-shared-context",
     "write": "research-write-v1",
 }
 VARIANTS: dict[str, dict[str, bool]] = {
@@ -122,6 +124,7 @@ VARIANTS: dict[str, dict[str, bool]] = {
     },
 }
 MIN_SOURCE_CHARS = 400
+ENTAILMENT_BATCH_SIZE = 40
 # Kết quả tìm kiếm phải chứa ít nhất 1/3 từ khóa của truy vấn ở tiêu đề/đoạn trích/URL.
 MIN_HIT_RELEVANCE = 0.34
 # Lượt chạy do lệnh eval tạo: worker không nhận, để eval tự điều khiển từng bước và đo thời gian.
@@ -152,9 +155,10 @@ EXTRACT_TASK = (
     "you. Return no claims for a source with nothing relevant."
 )
 ENTAIL_TASK = (
-    "For each claim in the source, decide from its evidence text alone whether the evidence "
-    "supports it: supported (fully), partial (only part of the claim), not_supported. Return one "
-    "judgement per claim_id."
+    "Judge every claim using only its source evidence: supported (fully), partial, not_supported. "
+    "Rows may contain one claim, or a claims array sharing evidence passages from the SAME source. "
+    "For grouped claims, each claim's quote must support the whole claim; shared context may "
+    "clarify the quote but must not supply unrelated facts. Return one judgement per claim_id."
 )
 WRITE_TASK = (
     "Write a concise Vietnamese research brief that answers the question in <context> using ONLY "
@@ -532,16 +536,30 @@ def _input_hash(
 
 
 def _llm_many(
-    ctx: RunContext, stage: str, prompts: list[str], schema: type[BaseModel]
+    ctx: RunContext,
+    stage: str,
+    prompts: list[str],
+    schema: type[BaseModel],
+    *,
+    skip_cache: bool = False,
 ) -> list[tuple[BaseModel | None, BaseException | None]]:
     model = str(getattr(ctx.llm, "name", "unknown"))
     task = f"research-agent.{stage}"
-    hashes = [_input_hash(stage, model, schema, prompt, ctx.salt) for prompt in prompts]
+    provider_name = ctx.run.provider_name or settings.ai_provider
+    cache_identity = json.dumps(
+        [
+            ctx.salt,
+            provider_name,
+            str(getattr(ctx.llm, "version", "")),
+            ctx.run.created_by if provider_name == "chatgpt_plan" else "",
+        ]
+    )
+    hashes = [_input_hash(stage, model, schema, prompt, cache_identity) for prompt in prompts]
     results: list[tuple[BaseModel | None, BaseException | None]] = [(None, None)] * len(prompts)
     pending: list[int] = []
     for index, input_hash in enumerate(hashes):
         cached = None
-        if ctx.flags.get("llm_cache"):
+        if ctx.flags.get("llm_cache") and not skip_cache:
             cached = ctx.db.scalar(
                 select(AIOutput)
                 .where(
@@ -558,8 +576,6 @@ def _llm_many(
             pending.append(index)
     if len(pending) + int(ctx.metrics.get("llm_calls", 0)) > settings.research_max_llm_calls:
         raise LLMBudgetExceeded()
-
-    provider_name = ctx.run.provider_name or settings.ai_provider
 
     def call(prompt: str) -> tuple[BaseModel, dict[str, Any]]:
         with provider_observation(provider=provider_name, model=model, operation=task) as usage:
@@ -580,7 +596,7 @@ def _llm_many(
         ctx.bump("cached_input_tokens", int(usage.get("cached_input_tokens") or 0))
         ctx.bump("total_tokens", int(usage.get("total_tokens") or 0))
         ctx.bump("prompt_chars", len(prompts[index]))
-        if ctx.flags.get("llm_cache"):
+        if ctx.flags.get("llm_cache") and not skip_cache:
             ctx.db.add(
                 AIOutput(
                     task=task,
@@ -1061,6 +1077,26 @@ def _check_claim(
     return claim
 
 
+def _entailment_claim_key(ctx: RunContext, claim: ResearchRunClaim, text: str) -> str:
+    provider_name = ctx.run.provider_name or settings.ai_provider
+    material = json.dumps(
+        [
+            claim.text,
+            claim.matched_quote or claim.quote,
+            claim.start_offset,
+            claim.end_offset,
+            hashlib.sha256(text.encode()).hexdigest(),
+            provider_name,
+            str(getattr(ctx.llm, "version", "")),
+            ctx.run.created_by if provider_name == "chatgpt_plan" else "",
+        ],
+        ensure_ascii=False,
+    )
+    return _input_hash(
+        "entail", str(getattr(ctx.llm, "name", "unknown")), EntailmentBatch, material, ctx.salt
+    )
+
+
 def stage_verifying(ctx: RunContext) -> str:
     claims = list(
         ctx.db.scalars(
@@ -1080,25 +1116,68 @@ def stage_verifying(ctx: RunContext) -> str:
             select(ResearchRunSource).where(ResearchRunSource.run_id == ctx.run.id)
         )
     }
-    batches = [claims[index : index + 20] for index in range(0, len(claims), 20)]
+    keys = {
+        claim.id: _entailment_claim_key(ctx, claim, sources[claim.source_id].content_text)
+        for claim in claims
+    }
+    resolved: dict[str, str] = {}
+    ambiguous = False
+    model = str(getattr(ctx.llm, "name", "unknown"))
+    if ctx.flags.get("llm_cache") and keys:
+        cached = ctx.db.scalars(
+            select(AIOutput).where(
+                AIOutput.task == "research-agent.entail-claim",
+                AIOutput.model_name == model,
+                AIOutput.input_hash.in_(set(keys.values())),
+                AIOutput.created_at >= utcnow() - timedelta(hours=24),
+            )
+        )
+        choices: dict[str, set[str]] = {}
+        for row in cached:
+            verdict = row.output_json.get("verdict")
+            if verdict in {"supported", "partial", "not_supported"}:
+                choices.setdefault(row.input_hash, set()).add(verdict)
+        # Concurrent calls can disagree; ambiguity requires a fresh judgement.
+        by_key = {key: next(iter(values)) for key, values in choices.items() if len(values) == 1}
+        ambiguous = any(len(values) > 1 for values in choices.values())
+        resolved = {
+            claim.id: by_key[keys[claim.id]] for claim in claims if keys[claim.id] in by_key
+        }
+        ctx.bump("entailment_cache_hits", len(resolved))
+    pending = [claim for claim in claims if claim.id not in resolved]
+    batches = [
+        pending[index : index + ENTAILMENT_BATCH_SIZE]
+        for index in range(0, len(pending), ENTAILMENT_BATCH_SIZE)
+    ]
     # Mã ngắn trong mỗi lô: mô hình chép lại UUID hay sai, khiến nhận định mất phán quyết.
     aliases = [{f"C{n}": claim for n, claim in enumerate(batch, start=1)} for batch in batches]
     prompts = []
     for batch_aliases in aliases:
-        lines = []
+        windows = []
         for alias, claim in batch_aliases.items():
             text = sources[claim.source_id].content_text
             start = max(0, (claim.start_offset or 0) - 200)
             end = min(len(text), (claim.end_offset or 0) + 200)
-            lines.append(
-                json.dumps(
-                    {"claim_id": alias, "claim": claim.text, "evidence": text[start:end]},
-                    ensure_ascii=False,
+            windows.append(
+                EntailmentWindow(
+                    alias,
+                    claim.source_id,
+                    claim.text,
+                    claim.matched_quote or claim.quote,
+                    start,
+                    end,
                 )
             )
-        prompts.append(task_prompt(ENTAIL_TASK, sources=[Source("\n".join(lines), id="CLAIMS")]))
+        payload = compact_entailment_payload(
+            windows, {key: source.content_text for key, source in sources.items()}
+        )
+        prompts.append(task_prompt(ENTAIL_TASK, sources=[Source(payload, id="CLAIMS")]))
     try:
-        outcomes = _llm_many(ctx, "entail", prompts, EntailmentBatch)
+        outcomes = (
+            _llm_many(ctx, "entail", prompts, EntailmentBatch, skip_cache=ambiguous)
+            if prompts
+            else []
+        )
     except LLMBudgetExceeded:
         outcomes = [(None, LLMBudgetExceeded())] * len(batches)
         _emit(
@@ -1108,32 +1187,52 @@ def stage_verifying(ctx: RunContext) -> str:
             "verifying",
             "Đạt giới hạn lượt gọi AI; chỉ dùng kiểm chứng trích dẫn.",
         )
-    verified = 0
-    unjudged = 0
+    cacheable: dict[str, set[str]] = {}
     for batch_aliases, (judged, error) in zip(aliases, outcomes, strict=True):
         verdicts = {} if error is not None else {j.claim_id: j.verdict for j in judged.judgements}
         for alias, claim in batch_aliases.items():
             verdict = verdicts.get(alias)
-            if verdict is None:
-                # Không có phán quyết (lỗi, hết ngân sách, mô hình bỏ sót): không coi là đạt.
-                claim.entailment, claim.status, claim.reason = "skipped", "flagged", "no_verdict"
-                unjudged += 1
-            elif verdict == "supported":
-                claim.entailment, claim.status = "supported", "verified"
-            elif verdict == "partial":
-                claim.entailment, claim.status, claim.reason = (
-                    "partial",
-                    "flagged",
-                    "partial_support",
+            if verdict is not None:
+                resolved[claim.id] = verdict
+                cacheable.setdefault(keys[claim.id], set()).add(verdict)
+    if ctx.flags.get("llm_cache"):
+        for key, verdicts in cacheable.items():
+            if len(verdicts) == 1:
+                ctx.db.add(
+                    AIOutput(
+                        task="research-agent.entail-claim",
+                        model_name=model,
+                        model_version=str(getattr(ctx.llm, "version", "")),
+                        prompt_version=PROMPT_VERSIONS["entail"],
+                        input_hash=key,
+                        output_json={"verdict": next(iter(verdicts))},
+                        confidence=0,
+                    )
                 )
-            else:
-                claim.entailment, claim.status, claim.reason = (
-                    "not_supported",
-                    "rejected",
-                    "not_supported",
-                )
-                ctx.bump("claims_rejected")
-            verified += claim.status == "verified"
+    verified = 0
+    unjudged = 0
+    for claim in claims:
+        verdict = resolved.get(claim.id)
+        if verdict is None:
+            # Không có phán quyết (lỗi, hết ngân sách, mô hình bỏ sót): không coi là đạt.
+            claim.entailment, claim.status, claim.reason = "skipped", "flagged", "no_verdict"
+            unjudged += 1
+        elif verdict == "supported":
+            claim.entailment, claim.status = "supported", "verified"
+        elif verdict == "partial":
+            claim.entailment, claim.status, claim.reason = (
+                "partial",
+                "flagged",
+                "partial_support",
+            )
+        else:
+            claim.entailment, claim.status, claim.reason = (
+                "not_supported",
+                "rejected",
+                "not_supported",
+            )
+            ctx.bump("claims_rejected")
+        verified += claim.status == "verified"
     ctx.metrics["claims_verified"] = verified
     ctx.metrics["claims_unjudged"] = unjudged
     _emit(

@@ -1,0 +1,124 @@
+{
+  "date": "2026-11-03T07:11:59.128Z",
+  "version": "13.5.0",
+  "phase": "before",
+  "performance": 0.8,
+  "accessibility": 0.98,
+  "audits": {
+    "first-contentful-paint": {
+      "score": 0.81,
+      "value": 2112.4533,
+      "display": "2.1 s"
+    },
+    "largest-contentful-paint": {
+      "score": 0.52,
+      "value": 3912.4533,
+      "display": "3.9 s"
+    },
+    "speed-index": {
+      "score": 0.99,
+      "value": 2112.4533,
+      "display": "2.1 s"
+    },
+    "total-blocking-time": {
+      "score": 0.8,
+      "value": 289.00000000000045,
+      "display": "290 ms"
+    },
+    "max-potential-fid": {
+      "score": 0.38,
+      "value": 291,
+      "display": "290 ms"
+    },
+    "cumulative-layout-shift": {
+      "score": 1,
+      "value": 0.0027946256429470023,
+      "display": "0.003"
+    },
+    "server-response-time": {
+      "score": 1,
+      "value": 6,
+      "display": "Root document took 10 ms"
+    },
+    "interactive": {
+      "score": 0.88,
+      "value": 3912.4533000000006,
+      "display": "3.9 s"
+    },
+    "redirects": {
+      "score": 1,
+      "value": 0,
+      "display": ""
+    },
+    "mainthread-work-breakdown": {
+      "score": 0,
+      "value": 2240.788000000011,
+      "display": "2.2 s"
+    },
+    "bootup-time": {
+      "score": 1,
+      "value": 573.1719999999987,
+      "display": "0.6 s"
+    },
+    "network-rtt": {
+      "score": 1,
+      "value": 0.027899999999999998,
+      "display": "0 ms"
+    },
+    "network-server-latency": {
+      "score": 1,
+      "value": 4.1511000000000005,
+      "display": "0 ms"
+    },
+    "metrics": {
+      "score": 1,
+      "value": 3912
+    },
+    "heading-order": {
+      "score": 0
+    },
+    "total-byte-weight": {
+      "score": 1,
+      "value": 465506,
+      "display": "Total size was 455 KiB"
+    },
+    "unminified-css": {
+      "score": 1,
+      "value": 0,
+      "display": ""
+    },
+    "unminified-javascript": {
+      "score": 1,
+      "value": 0,
+      "display": ""
+    },
+    "unused-css-rules": {
+      "score": 0,
+      "value": 0,
+      "display": "Est savings of 24 KiB"
+    },
+    "unused-javascript": {
+      "score": 1,
+      "value": 0,
+      "display": ""
+    },
+    "dom-size-insight": {
+      "score": 1,
+      "value": 859
+    },
+    "forced-reflow-insight": {
+      "score": 0
+    },
+    "legacy-javascript-insight": {
+      "score": 0.5,
+      "display": "Est savings of 12 KiB"
+    },
+    "network-dependency-tree-insight": {
+      "score": 0
+    },
+    "render-blocking-insight": {
+      "score": 0,
+      "display": "Est savings of 1,110 ms"
+    }
+  }
+}

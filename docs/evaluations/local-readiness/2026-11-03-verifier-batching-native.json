@@ -1,0 +1,13 @@
+{
+  "type": "synthetic native verifier benchmark; not whole-pipeline cost",
+  "claims": 40,
+  "expected_verdicts_correct": 40,
+  "before_calls": 2,
+  "after_calls": 1,
+  "before_tokens": 26466,
+  "after_tokens": 11995,
+  "before_prompt_chars": 31655,
+  "after_prompt_chars": 7260,
+  "token_reduction_fraction": 0.5467769969016851,
+  "seconds": 21.62
+}

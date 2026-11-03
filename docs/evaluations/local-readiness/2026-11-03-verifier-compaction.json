@@ -1,0 +1,48 @@
+{
+  "type": "verifier payload replay; no provider calls",
+  "runs": [
+    {
+      "claims": 24,
+      "before_chars": 17389,
+      "after_chars": 17269
+    },
+    {
+      "claims": 44,
+      "before_chars": 35215,
+      "after_chars": 34995
+    },
+    {
+      "claims": 38,
+      "before_chars": 29265,
+      "after_chars": 29075
+    },
+    {
+      "claims": 40,
+      "before_chars": 31331,
+      "after_chars": 30987
+    },
+    {
+      "claims": 38,
+      "before_chars": 29153,
+      "after_chars": 28837
+    },
+    {
+      "claims": 35,
+      "before_chars": 25880,
+      "after_chars": 25705
+    },
+    {
+      "claims": 49,
+      "before_chars": 37361,
+      "after_chars": 36814
+    },
+    {
+      "claims": 54,
+      "before_chars": 42191,
+      "after_chars": 41921
+    }
+  ],
+  "before_chars": 247785,
+  "after_chars": 245603,
+  "reduction_fraction": 0.008806021349153537
+}

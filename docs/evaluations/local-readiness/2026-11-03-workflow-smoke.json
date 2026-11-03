@@ -1,0 +1,16 @@
+{
+  "date": "2026-11-03T09:09:41.088Z",
+  "csrfDenied": 403,
+  "chat": {
+    "provider": "codex",
+    "answerPresent": true,
+    "error": null,
+    "changeSet": null
+  },
+  "link": {
+    "status": "completed",
+    "reviewStatus": "needs_review",
+    "sourceUrl": "https://www.anthropic.com/research/building-effective-agents",
+    "errorCode": null
+  }
+}

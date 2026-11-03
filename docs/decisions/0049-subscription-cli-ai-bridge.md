@@ -7,6 +7,11 @@ Date: 2026-10-23
 Accepted — người dùng yêu cầu thay API bằng quota Codex/Antigravity/Claude Code; chọn mặc định
 Codex, hỗ trợ cả ba CLI, model nhẹ cho tác vụ nền.
 
+Cập nhật 2026-11-03: phần sandbox/keyring và đường dẫn cài đặt dưới đây được thay bằng
+[0054](0054-local-readiness-and-credential-boundaries.md): tắt native shell/exec/subagent Codex,
+broker chỉ expose credential agy, service chạy bản cài 0500 ngoài repo. Các mô tả xdg-dbus-proxy
+và rủi ro shell Codex phía dưới là lịch sử của quyết định ban đầu.
+
 ## Context
 
 Các tác vụ AI (phân loại link, xử lý tài liệu, paper-fit, sửa tài liệu, chat đồ thị) gọi API
