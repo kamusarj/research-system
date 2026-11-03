@@ -5,7 +5,6 @@ Cập nhật 2026-11-03; trạng thái hiện hành ở [HANDOFF](HANDOFF.md). B
 
 ## Now
 
-- [ ] Commit/push thay đổi local readiness; E2E và proof/trace đã đạt.
 - [ ] KPI tối ưu token: cần so sánh lại8 câu naive/optimized trên cùng provider/config; verifier đã
   giảm54,7% ở benchmark riêng, chưa đủ kết luận20% toàn pipeline. Không hạ chuẩn bằng chứng.
 - [ ] Linh đăng nhập http://localhost:13000 bằng tệp riêng trên máy, đổi mật khẩu tại `/account`,
@@ -54,6 +53,8 @@ Cập nhật 2026-11-03; trạng thái hiện hành ở [HANDOFF](HANDOFF.md). B
   jobs, not only within one fetch. Needs a schema column.
 
 ## Done — Local 2026-11-03
+
+- [x] Commit triển khai `2f04131` đã push; GitHub security CI run41611694633 đạt.
 
 - [x] API/worker non-root, read-only, caps/PID bounds; volume cũ/restore/OCR/LaTeX/migration đã kiểm.
 - [x] CLI sandbox: tắt native Codex execution/subagent, agy scoped keyring broker, negative canary đạt.

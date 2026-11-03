@@ -8,7 +8,7 @@ trong archive là cấu hình hiện tại. Task board: [TASKS.md](TASKS.md).
 
 Hoàn tất các việc kỹ thuật local trong Now theo yêu cầu “làm hết các việc tiếp theo”, tự tạo owner;
 user xác nhận chưa có tên miền. Intake #16 / `US-REMAINING-LOCAL-READINESS`, decision 0054/DEC-067.
-Container hardening intake #15 đã hoàn tất. E2E và mechanical Harness proof đã đạt; story local readiness implemented. Đang lưu commit/push.
+Container hardening intake #15 đã hoàn tất. E2E và mechanical Harness proof đã đạt; story local readiness implemented. Implementation commit `2f04131` đã push; GitHub security CI đã đạt.
 
 ## Current Runtime
 
@@ -51,7 +51,8 @@ Container hardening intake #15 đã hoàn tất. E2E và mechanical Harness proo
   payload chars. Đây không phải bằng chứng giảm20% token toàn pipeline; optimization story vẫn mở.
 - Một research q2 thật:97,7s/8 call/107598 token,18 câu có citation,9 nguồn/8 domain; entity recall0,4.
 - API/Discord pip-audit0; npm production0, dev/lint14 Moderate,0 High/Critical; không force downgrade.
-- Gitleaks lịch sử47 commit sạch trước commit mới; pre-commit sẽ quét staged. Evidence:
+- Gitleaks lịch sử và staged sạch; pre-commit đạt. GitHub security CI run41611694633 thành công
+  (secrets + production npm/API/Discord audit). Evidence:
   [local readiness](../docs/evaluations/local-readiness/README.md), [validation](../docs/stories/remaining-local-readiness/validation.md).
 
 ## Remaining / External Inputs
@@ -69,7 +70,8 @@ Container hardening intake #15 đã hoàn tất. E2E và mechanical Harness proo
 
 ## Next Best Action
 
-Commit/push nhánh hiện tại sau gitleaks; các kiểm tra kỹ thuật và Harness đã đạt.
+User đăng nhập bằng tệp riêng, đổi mật khẩu và xem các draft. Commit triển khai `2f04131` đã push;
+kiểm tra kỹ thuật/Harness và GitHub security CI đã đạt.
 Sau đó user đăng nhập tại UI bằng tệp riêng, đổi mật khẩu và xem báo cáo/draft trước khi duyệt.
 Agent sau chỉ tiếp tục provider/team/offsite khi có đầu vào; không tạo lại owner hoặc cài lại dịch vụ
 đã đạt nếu không có thay đổi. Giữ backup và ảnh `*:pre-hardening-20261103` làm rollback.

@@ -64,7 +64,7 @@ không đăng ký credential, OAuth consent hoặc ký nghiệm thu sản phẩm
 - `bash scripts/verify_container_hardening.sh --live` trên ảnh mới đạt: isolated migration/check,
   non-root/caps/read-only, legacy storage/symlink/restore, OCR, LaTeX với thread competition.
 - Full API 603 test đạt; research targeted 35; web 205 test/typecheck/lint/production build đạt.
-  Mechanical proof cuối bằng `bash scripts/verify_local_readiness.sh` đang chốt.
+  Mechanical proof cuối bằng `bash scripts/verify_local_readiness.sh` đã đạt.
 - Browser isolated project `baa-readiness-e2e`: PG tmpfs/volume riêng, API28000, Next 23000;
   không dùng credentials thật, không native CLI/OAuth. Auth 9/9 đạt gồm owner/viewer + SSR history
   24 tin/múi giờ Pacific/Honolulu. History fixture repeat 9/9 đạt; full 81/81 case cuối đạt,9 auth skip ở mode disabled được chạy riêng 9/9.
@@ -85,8 +85,9 @@ không đăng ký credential, OAuth consent hoặc ký nghiệm thu sản phẩm
 
 ## Verification result
 
-Các phần triển khai local và phép đo nêu trên đạt. E2E tổng hợp cuối, mechanical Harness proof,
-trace/commit/push đang chốt; sẽ bổ sung kết quả cuối ngay bên dưới trước khi kết thúc phiên.
+Đợt triển khai local đã đạt kiểm tra cuối: API603, web205, E2E81+auth9, production build,
+platform canary và fresh Harness completion. Trace15 detailed3/3 và context3/3. Commit triển khai
+`2f04131` đã push, GitHub security CI đạt; chi tiết đóng phiên ở dưới.
 Không đánh dấu provider/team/owner acceptance hoặc KPI toàn pipeline đã xong.
 
 ## Known issues
@@ -106,8 +107,8 @@ Không đánh dấu provider/team/owner acceptance hoặc KPI toàn pipeline đ�
 
 ## Next best action
 
-Chốt bằng chứng còn lại, đóng story local readiness/trace, commit và push nhánh hiện tại sau
-gitleaks. User lấy credential từ tệp riêng trên máy, đổi mật khẩu và tự duyệt draft/Graph/UI.
+User lấy credential từ tệp riêng trên máy, đổi mật khẩu và tự duyệt draft/Graph/UI.
+Story local readiness đã implemented; mã đã commit/push và CI đạt.
 Agent sau dùng HANDOFF/TASKS ngắn mới, chỉ mở archive khi cần lịch sử; không tạo lại owner hoặc
 cài lại dịch vụ đã kiểm chứng nếu source/config không đổi.
 
@@ -134,3 +135,18 @@ allowlist hiện có; đổi password fixture thành giá trị test ngắn. Kh�
 Rerun container script và staged gitleaks trước commit. Trace13 detailed đạt nhưng thiếu tên command
 trong files_read; trace14 ghi lại command nên context3/3, nhưng scorer đòi chữ unavailable cho
 metadata không được đo. Trace closeout kế tiếp ghi đúng cả context và giải thích metadata.
+
+## Git / CI closeout
+
+- Implementation commit: `2f04131fa10586f366e78ce0f65b93728b80df6f`,
+  `feat(local): harden runtime and complete local readiness`. Pre-commit gitleaks sạch.
+- Push fast-forward lên `origin/feature/research-system-mvp` thành công, không force; trước đợt
+  này46 commit local chờ, sau push branch ahead0/behind0. Không merge vào nhánh mặc định.
+- [GitHub security CI](https://github.com/kamusarj/research-system/actions/runs/41611694633)
+  success: secrets toàn lịch sử và production dependencies npm/API/Discord đều đạt.
+- Platform script sau fixture change đạt lại; auth local bật, anonymous401, health200;
+  Ollama bridge ảnh vá mới tags200/0 model. Backup cuối Result=success, ExecMainStatus=0.
+- Harness story implemented; trace13/15 detailed3/3, trace15 context3/3. Backlog1 đã đóng;
+  backlog2 chỉ là cải thiện wording metadata scorer, không ảnh hưởng runtime và ngoài phạm vi phiên.
+- Bản ghi handoff/task/session/progress cuối được lưu trong commit tài liệu tiếp theo; không có
+  thay đổi code sau verification. Các đầu vào bên ngoài và KPI toàn pipeline vẫn chưa được ký xong.
