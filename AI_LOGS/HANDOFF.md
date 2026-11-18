@@ -40,7 +40,7 @@ máy cá nhân qua SSH/VPN. Bước tiếp theo là operator cài model thật �
   spec local models đạt 6/6 trên runtime thật; 2 spec chat cũ đạt 6/6.
 - Recreate api/worker/frontend với code + env mới; health 200; route local models trả 401 `AUTH_REQUIRED`.
 - Điền evidence `docs/stories/deployed-local-models/validation.md`; Harness trace/checkpoint + story
-  complete; cập nhật AI_LOGS.
+  complete; cập nhật AI_LOGS. Commit triển khai `287aa76` đã push lên `feature/research-system-mvp`.
 
 ## Verification
 

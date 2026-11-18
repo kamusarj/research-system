@@ -62,6 +62,8 @@ Note: `ai-handoff/STATE.md` and `ai-handoff/LOG.md` do not exist in this repo; t
   - Runtime: api/worker/frontend recreated with new code; health 200; local models route returns 401
     `AUTH_REQUIRED` under local auth.
   - Harness `story complete US-DEPLOYED-LOCAL-MODELS`: pass; story marked implemented.
+  - Secret scan: `scripts/bin/gitleaks protect --staged` — no leaks; commit `287aa76` pushed to
+    `origin/feature/research-system-mvp`.
 - Result: all executed checks pass. Fixture inference only — no real model weight was installed or called.
 
 ## Next Agent Notes
