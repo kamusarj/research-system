@@ -18,7 +18,6 @@ from app.services.ai_usage import (
     report_usage,
     usage_from_chat_completions,
     usage_from_gemini,
-    usage_from_ollama,
     usage_from_openai_responses,
 )
 from app.services.prompts import SYSTEM_INSTRUCTIONS, Source, task_prompt
@@ -69,28 +68,51 @@ class BaseProvider:
 
 
 class OllamaProvider(BaseProvider):
-    name = settings.ollama_model
     version = "ollama-local"
 
+    def __init__(self) -> None:
+        self.name = settings.ollama_model
+
     def complete_json(self, prompt: str, schema: type[SchemaT]) -> SchemaT:
-        schema_json = schema.model_json_schema()
-        response = httpx.post(
-            f"{settings.ollama_base_url}/api/generate",
-            json={
-                "model": settings.ollama_model,
-                "system": SYSTEM_INSTRUCTIONS,
-                "prompt": f"{prompt}\nJSON Schema: {json.dumps(schema_json)}",
-                "format": schema_json,
-                "stream": False,
-                "think": False,
-                "options": {"temperature": 0},
-            },
-            timeout=settings.ai_request_timeout,
+        return _complete_local_structured("ollama", prompt, schema)
+
+
+class LocalOpenAIProvider(BaseProvider):
+    version = "local-openai-compatible-v1"
+
+    def __init__(self) -> None:
+        self.name = settings.local_openai_model
+
+    def complete_json(self, prompt: str, schema: type[SchemaT]) -> SchemaT:
+        return _complete_local_structured("local_openai", prompt, schema)
+
+
+def _complete_local_structured(provider_id: str, prompt: str, schema: type[SchemaT]) -> SchemaT:
+    from app.services.object_storage import DocumentError
+    from app.services.providers.local_models import complete_local_json
+
+    try:
+        output, usage = complete_local_json(
+            provider_id, prompt, schema, settings.ai_max_output_tokens
         )
-        response.raise_for_status()
-        payload = response.json()
-        report_usage(**usage_from_ollama(payload), prompt_chars=len(prompt))
-        return schema.model_validate_json(payload["response"])
+    except DocumentError as exc:
+        # Preserve the existing job retry/error mapper without storing upstream
+        # URLs, credentials or server response bodies in an exception.
+        status = {
+            "CHAT_API_KEY_INVALID": 401,
+            "CHAT_API_ACCESS_DENIED": 403,
+            "CHAT_MODEL_UNAVAILABLE": 404,
+            "CHAT_MODEL_INCOMPATIBLE": 422,
+            "CHAT_PROVIDER_RATE_LIMITED": 429,
+        }.get(exc.code, exc.status_code)
+        request = httpx.Request("POST", "https://local-model.invalid/inference")
+        raise httpx.HTTPStatusError(
+            "Local model request failed",
+            request=request,
+            response=httpx.Response(status, request=request),
+        ) from None
+    report_usage(**usage, prompt_chars=len(prompt))
+    return schema.model_validate(output)
 
 
 def secret_value(value: Any, provider_name: str) -> str:
@@ -322,6 +344,7 @@ class ChatGPTPlanProvider(BaseProvider):
 
 PROVIDERS: dict[str, type[BaseProvider]] = {
     "ollama": OllamaProvider,
+    "local_openai": LocalOpenAIProvider,
     "openai": OpenAIProvider,
     "deepseek": DeepSeekProvider,
     "gemini": GeminiProvider,
@@ -347,15 +370,12 @@ def provider(name: str | None = None, *, user_id: str | None = None) -> LLMProvi
 
 
 def ollama_reachable() -> bool:
+    from app.services.object_storage import DocumentError
+    from app.services.providers.local_models import list_local_models
+
     try:
-        response = httpx.get(f"{settings.ollama_base_url}/api/tags", timeout=0.75)
-        response.raise_for_status()
-        models = response.json().get("models", [])
-        return any(
-            item.get("name") == settings.ollama_model or item.get("model") == settings.ollama_model
-            for item in models
-        )
-    except (httpx.HTTPError, TypeError, ValueError):
+        return settings.ollama_model in list_local_models("ollama", timeout=0.75)
+    except DocumentError:
         return False
 
 
@@ -394,6 +414,16 @@ def preflight_provider(provider_id: str) -> bool | None:
 
     if provider_id == "ollama":
         return ollama_reachable()
+    if provider_id == "local_openai":
+        if not settings.local_openai_base_url.strip():
+            return None
+        from app.services.object_storage import DocumentError
+        from app.services.providers.local_models import list_local_models
+
+        try:
+            return settings.local_openai_model in list_local_models("local_openai", timeout=3)
+        except DocumentError:
+            return False
     if provider_id in CLI_PROVIDERS:
         # Chỉ hỏi cầu nối CLI đã cài và đăng nhập chưa; không chạy lượt AI nào nên không tốn quota.
         return bridge_backend_available(provider_id) if bridge_configured() else None
@@ -428,6 +458,7 @@ def reset_provider_preflight_cache() -> None:
 def provider_status(preflight: bool = False) -> list[dict[str, Any]]:
     configured = {
         "ollama": True,
+        "local_openai": bool(settings.local_openai_base_url.strip()),
         "openai": secret_configured(settings.openai_api_key),
         "deepseek": secret_configured(settings.deepseek_api_key),
         "gemini": secret_configured(settings.gemini_api_key),
@@ -455,7 +486,15 @@ def provider_status(preflight: bool = False) -> list[dict[str, Any]]:
             "active": provider_id == settings.ai_provider,
             "chat_active": (
                 provider_id == settings.graph_chat_default_provider
-                and provider_id in {"openai", "deepseek", *CLI_PROVIDERS, chatgpt_plan.PROVIDER_ID}
+                and provider_id
+                in {
+                    "openai",
+                    "deepseek",
+                    "ollama",
+                    "local_openai",
+                    *CLI_PROVIDERS,
+                    chatgpt_plan.PROVIDER_ID,
+                }
             )
             or (provider_id == chatgpt_plan.PROVIDER_ID and plan_default),
             "model": factory().name,

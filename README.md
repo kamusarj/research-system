@@ -82,15 +82,15 @@ Nạp dữ liệu mẫu vào cơ sở dữ liệu API đang chạy:
 docker compose exec api python -m app.seed
 ```
 
-### Dùng mô hình Ollama có sẵn trên máy từ Docker
+### Dùng mô hình local có sẵn trên máy từ Docker
 
-Hồ sơ tùy chọn `local-ai` chỉ mở các điểm cuối thẻ, phiên bản và sinh nội dung của Ollama cho Docker qua địa chỉ nội bộ `docker0`; nó không kéo ảnh hay tải mô hình. Trước tiên hãy cài/chạy Ollama trên máy, đặt `OLLAMA_MODEL` thành mô hình đã xuất hiện trong `ollama list`, rồi khởi động cầu nối và tạo lại API/worker:
+Hồ sơ tùy chọn `local-ai` mở hai cầu nối giới hạn qua địa chỉ nội bộ `docker0`: `ollama-bridge` (thẻ, phiên bản, sinh nội dung, chat) và `local-openai-bridge` (danh sách model và chat completions cho máy chủ tương thích OpenAI như LM Studio). Cầu nối không kéo ảnh, không tải mô hình và từ chối mọi đường dẫn ngoài danh sách cho phép. Cài/chạy Ollama hoặc LM Studio trên máy, đặt `OLLAMA_MODEL`/`LOCAL_OPENAI_MODEL` thành mô hình đã cài (ví dụ `ollama list`), rồi khởi động cầu nối và tạo lại API/worker:
 
 ```bash
-docker compose --profile local-ai up -d --build ollama-bridge api worker
+docker compose --profile local-ai up -d --build ollama-bridge local-openai-bridge api worker
 ```
 
-Địa chỉ cầu nối mặc định là `172.17.0.1:11435`; container cục bộ truy cập được nhưng đây không phải địa chỉ LAN của máy. Đổi `OLLAMA_BRIDGE_BIND` nếu cầu Docker dùng địa chỉ khác. Cầu nối chủ động từ chối thao tác kéo mô hình và các đường dẫn Ollama tùy ý.
+Địa chỉ cầu nối mặc định là `172.17.0.1:11435` (Ollama) và `172.17.0.1:11437` (OpenAI-compatible, `LOCAL_OPENAI_BASE_URL=http://172.17.0.1:11437/v1`); container cục bộ truy cập được nhưng đây không phải địa chỉ LAN của máy. Đổi `OLLAMA_BRIDGE_BIND`/`LOCAL_OPENAI_BRIDGE_BIND` nếu cầu Docker dùng địa chỉ khác; đổi `OLLAMA_BRIDGE_UPSTREAM`/`LOCAL_OPENAI_BRIDGE_UPSTREAM` khi model chạy trên máy khác và được đưa về loopback của máy chủ qua SSH reverse tunnel hoặc VPN (xem `Docs/Local Model Deployment Plan.md`). Key máy chủ (`OLLAMA_API_KEY`/`LOCAL_OPENAI_API_KEY`) chỉ nằm phía server, không bao giờ trả về trình duyệt.
 
 ### Dùng quota Claude Code, Codex hoặc Antigravity thay cho API
 

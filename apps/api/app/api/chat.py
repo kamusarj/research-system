@@ -18,8 +18,17 @@ from app.schemas.chat import (
     ChatTurnRequest,
     ChatVerificationRead,
     ChatVerifyRequest,
+    LocalChatModelsRead,
+    LocalChatModelsRequest,
+    LocalChatVerificationRead,
+    LocalChatVerifyRequest,
 )
-from app.services.chat_connections import list_personal_models, verify_personal_model
+from app.services.chat_connections import (
+    list_personal_models,
+    local_connection_models,
+    verify_local_model,
+    verify_personal_model,
+)
 from app.services.documents import get_object_storage
 from app.services.graph_chat import (
     close_chat_session,
@@ -48,6 +57,18 @@ def connection_models(request: ChatModelsRequest, response: Response) -> ChatMod
 def connection_verify(request: ChatVerifyRequest, response: Response) -> ChatVerificationRead:
     response.headers["Cache-Control"] = "no-store"
     return verify_personal_model(request)
+
+
+@router.post("/connections/local/models", response_model=LocalChatModelsRead)
+def local_models(request: LocalChatModelsRequest, response: Response) -> LocalChatModelsRead:
+    response.headers["Cache-Control"] = "no-store"
+    return local_connection_models(request)
+
+
+@router.post("/connections/local/verify", response_model=LocalChatVerificationRead)
+def local_verify(request: LocalChatVerifyRequest, response: Response) -> LocalChatVerificationRead:
+    response.headers["Cache-Control"] = "no-store"
+    return verify_local_model(request)
 
 
 @router.get("/sessions", response_model=ChatSessionList)

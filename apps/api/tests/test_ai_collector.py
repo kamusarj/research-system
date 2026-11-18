@@ -15,27 +15,30 @@ class StructuredProbe(BaseModel):
 def test_ollama_provider_disables_thinking_and_sends_schema(monkeypatch):
     captured = {}
 
-    class Response:
-        def raise_for_status(self):
-            return None
+    def fake_request(provider, method, path, *, payload=None, timeout=None):
+        captured["provider"] = provider
+        captured["method"] = method
+        captured["path"] = path
+        captured["payload"] = payload
+        return {
+            "message": {"content": '{"label":"local"}'},
+            "done": True,
+            "prompt_eval_count": 5,
+            "eval_count": 2,
+        }
 
-        def json(self):
-            return {"response": '{"label":"local"}'}
-
-    def fake_post(url, **kwargs):
-        captured["url"] = url
-        captured.update(kwargs)
-        return Response()
-
-    monkeypatch.setattr("app.services.ai.httpx.post", fake_post)
+    monkeypatch.setattr("app.services.providers.local_models._request", fake_request)
 
     result = OllamaProvider().complete_json("Return a label.", StructuredProbe)
 
     assert result.label == "local"
-    assert captured["url"].endswith("/api/generate")
-    assert captured["json"]["think"] is False
-    assert captured["json"]["options"]["temperature"] == 0
-    assert "label" in captured["json"]["format"]["properties"]
+    assert captured["provider"] == "ollama"
+    assert captured["method"] == "POST"
+    assert captured["path"] == "/api/chat"
+    assert captured["payload"]["model"] == settings.ollama_model
+    assert captured["payload"]["think"] is False
+    assert captured["payload"]["options"]["temperature"] == 0
+    assert "label" in captured["payload"]["format"]["properties"]
 
 
 def test_mistral_provider_uses_strict_json_schema(monkeypatch):

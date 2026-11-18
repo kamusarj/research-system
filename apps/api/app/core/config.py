@@ -27,10 +27,23 @@ class Settings(BaseSettings):
     ai_provider: str = "mistral"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2"
+    ollama_api_key: SecretStr | None = None
+    # Endpoint do operator cấu hình, không nhận URL/credential từ trình duyệt.
+    local_openai_base_url: str = ""
+    local_openai_api_key: SecretStr | None = None
+    local_openai_model: str = ""
+    local_ai_max_response_bytes: int = Field(default=2_000_000, ge=1024, le=16_000_000)
     openai_api_key: SecretStr | None = None
     openai_model: str = "gpt-5.6-luna"
     graph_chat_default_provider: Literal[
-        "openai", "deepseek", "claude_code", "codex", "antigravity", "chatgpt_plan"
+        "openai",
+        "deepseek",
+        "claude_code",
+        "codex",
+        "antigravity",
+        "chatgpt_plan",
+        "ollama",
+        "local_openai",
     ] = "deepseek"
     chat_max_history_messages: int = 20
     # Ngân sách ký tự cho lịch sử gửi lại mỗi lượt; tin mới nhất luôn được giữ.
@@ -255,11 +268,37 @@ class Settings(BaseSettings):
         # docker compose truyền biến chưa đặt dưới dạng chuỗi rỗng.
         return None if isinstance(value, str) and not value.strip() else value
 
+    @field_validator("ollama_base_url", "local_openai_base_url")
+    @classmethod
+    def validate_local_model_endpoint(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        if not value:
+            return value
+        try:
+            parsed = urlsplit(value)
+            valid = (
+                parsed.scheme in {"http", "https"}
+                and parsed.hostname
+                and parsed.username is None
+                and parsed.password is None
+                and not parsed.query
+                and not parsed.fragment
+                and not any(char.isspace() or ord(char) < 32 for char in value)
+            )
+            _ = parsed.port
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ValueError("Local model endpoint needs HTTP(S) without URL credentials or query")
+        return value
+
     @model_validator(mode="after")
     def load_secret_files_and_validate_deployment(self) -> "Settings":
         secret_fields = (
             "database_url",
             "openai_api_key",
+            "ollama_api_key",
+            "local_openai_api_key",
             "deepseek_api_key",
             "gemini_api_key",
             "openrouter_api_key",
@@ -346,9 +385,7 @@ class Settings(BaseSettings):
 
     @property
     def chatgpt_plan_callback(self) -> str:
-        return (
-            self.chatgpt_plan_redirect_uri.strip() or "http://127.0.0.1:18000/auth/callback"
-        )
+        return self.chatgpt_plan_redirect_uri.strip() or "http://127.0.0.1:18000/auth/callback"
 
     @property
     def chatgpt_plan_web_origin(self) -> str:

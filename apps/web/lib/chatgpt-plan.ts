@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import type { LocalChatProvider } from "@/lib/chat";
 
 export const CHATGPT_PLAN_PROVIDER = "chatgpt_plan";
 export const CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage";
@@ -72,5 +73,12 @@ export function markWelcomed() {
 }
 
 export function providerLabel(id: string): string {
-  return id === CHATGPT_PLAN_PROVIDER ? "Gói ChatGPT của tôi" : id;
+  if (id === CHATGPT_PLAN_PROVIDER) return "Gói ChatGPT của tôi";
+  if (id === "ollama") return "Ollama · Mô hình cục bộ";
+  if (id === "local_openai") return "LM Studio / OpenAI cục bộ";
+  return id;
+}
+
+export function isLocalChatProvider(id: string): id is LocalChatProvider {
+  return id === "ollama" || id === "local_openai";
 }

@@ -27,6 +27,15 @@ services:
   document-storage-init:
     image: businessaiagents-team-api:latest
 
+  # Cầu nối model local chạy code đóng gói trong ảnh team; không bind-mount source.
+  ollama-bridge:
+    image: businessaiagents-team-api:latest
+    volumes: !reset []
+
+  local-openai-bridge:
+    image: businessaiagents-team-api:latest
+    volumes: !reset []
+
   database:
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Đặt POSTGRES_PASSWORD trong .env.team}

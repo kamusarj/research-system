@@ -41,6 +41,7 @@ from app.schemas.chat import (
 )
 from app.services import chatgpt_plan
 from app.services.ai_usage import report_usage_dict
+from app.services.chat_connections import require_installed_local_model
 from app.services.chatgpt_import import import_chatgpt_shared_snapshot
 from app.services.graph_changes import validate_change_set
 from app.services.object_storage import DocumentError, ObjectStorage
@@ -370,9 +371,12 @@ def create_chat_session(db: Session, request: ChatSessionCreate) -> ChatSession:
         else graph_chat_provider(
             request.provider
             or chatgpt_plan.default_provider_for(db)
-            or settings.graph_chat_default_provider
+            or settings.graph_chat_default_provider,
+            **({"model": request.model_name} if request.model_name is not None else {}),
         )
     )
+    if runtime.name in {"ollama", "local_openai"}:
+        require_installed_local_model(runtime.name, runtime.model)
     session = ChatSession(
         title=request.title or "Cuộc trao đổi mới",
         scope_type=request.scope_type,
@@ -413,8 +417,13 @@ def create_chatgpt_import_session(
             request.provider, api_key=request.personal_api_key, model=request.model_name
         )
         if request.credential_source == "personal"
-        else graph_chat_provider(request.provider or settings.graph_chat_default_provider)
+        else graph_chat_provider(
+            request.provider or settings.graph_chat_default_provider,
+            **({"model": request.model_name} if request.model_name is not None else {}),
+        )
     )
+    if runtime.name in {"ollama", "local_openai"}:
+        require_installed_local_model(runtime.name, runtime.model)
     snapshot = import_chatgpt_shared_snapshot(request.url, storage)
     imported_at = utcnow()
     session = ChatSession(
@@ -1068,7 +1077,14 @@ def run_chat_turn(
     db.commit()
     db.refresh(user_message)
 
-    runtime = runtime or graph_chat_provider(session.provider_name)
+    runtime = runtime or graph_chat_provider(
+        session.provider_name,
+        **(
+            {"model": session.model_name}
+            if session.provider_name in {"ollama", "local_openai"}
+            else {}
+        ),
+    )
     executor = ToolExecutor(db, session)
     context = build_scope_context(db, session)
     context_text = bounded_context_json(context, settings.chat_max_context_chars)

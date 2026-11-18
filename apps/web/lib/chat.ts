@@ -11,6 +11,23 @@ export function listChatSessions(): Promise<ChatSessionList> {
   return api("/chat/sessions");
 }
 
+export type LocalChatProvider = "ollama" | "local_openai";
+export type LocalChatSelection = { provider: LocalChatProvider; model_name: string };
+
+export function listLocalChatModels(provider: LocalChatProvider, signal?: AbortSignal): Promise<{ provider: LocalChatProvider; models: string[] }> {
+  return api("/chat/connections/local/models", {
+    method: "POST", signal, cache: "no-store",
+    body: JSON.stringify({ provider }),
+  });
+}
+
+export function verifyLocalChatModel(provider: LocalChatProvider, model: string, signal?: AbortSignal): Promise<LocalChatSelection & { verified: true }> {
+  return api("/chat/connections/local/verify", {
+    method: "POST", signal, cache: "no-store",
+    body: JSON.stringify({ provider, model_name: model }),
+  });
+}
+
 export function listPersonalChatModels(provider: string, apiKey: string, signal?: AbortSignal): Promise<{ provider: string; models: string[] }> {
   return api("/chat/connections/models", {
     method: "POST", signal, cache: "no-store",

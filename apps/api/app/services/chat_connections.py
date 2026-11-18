@@ -10,6 +10,10 @@ from app.schemas.chat import (
     ChatModelsRequest,
     ChatVerificationRead,
     ChatVerifyRequest,
+    LocalChatModelsRead,
+    LocalChatModelsRequest,
+    LocalChatVerificationRead,
+    LocalChatVerifyRequest,
 )
 from app.services.object_storage import DocumentError
 from app.services.providers.chat_errors import chat_provider_error
@@ -93,3 +97,39 @@ def verify_personal_model(request: ChatVerifyRequest) -> ChatVerificationRead:
         metadata={},
     )
     return ChatVerificationRead(provider=request.provider, model_name=request.model_name)
+
+
+def local_connection_models(request: LocalChatModelsRequest) -> LocalChatModelsRead:
+    from app.services.providers.local_models import list_local_models
+
+    return LocalChatModelsRead(
+        provider=request.provider, models=list_local_models(request.provider)
+    )
+
+
+def require_installed_local_model(provider: str, model: str) -> None:
+    from app.services.providers.local_models import list_local_models
+
+    if model not in list_local_models(provider):
+        raise DocumentError("CHAT_MODEL_UNAVAILABLE", "Selected local model is unavailable", 422)
+
+
+def verify_local_model(request: LocalChatVerifyRequest) -> LocalChatVerificationRead:
+    from app.services.providers.local_models import LocalGraphChatProvider
+
+    require_installed_local_model(request.provider, request.model_name)
+    runtime = LocalGraphChatProvider(
+        request.provider,
+        model=request.model_name,
+        max_output_tokens=128,
+        timeout=20,
+    )
+    result = runtime.respond(
+        input_items=[{"role": "user", "content": "Reply OK and do not call tools."}],
+        instructions="Connection check. Return the requested JSON response with a short reply.",
+        tools=[],
+        metadata={},
+    )
+    if not result.text.strip() or result.tool_calls:
+        raise DocumentError("CHAT_MODEL_INCOMPATIBLE", "Local model failed the JSON check", 422)
+    return LocalChatVerificationRead(provider=request.provider, model_name=request.model_name)

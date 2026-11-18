@@ -64,7 +64,7 @@ RATE_POLICIES: tuple[tuple[str, re.Pattern[str], RatePolicy], ...] = (
     ),
     (
         "POST",
-        re.compile(r"^/api/v1/chat/connections/(?:models|verify)/?$"),
+        re.compile(r"^/api/v1/chat/connections/(?:local/)?(?:models|verify)/?$"),
         RatePolicy("chat-connection", "rate_limit_chat_per_window"),
     ),
     (

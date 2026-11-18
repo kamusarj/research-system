@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import ChatPage from "./chat-workspace";
-import { createChatSession, importChatGPTSharedChat, sendChatMessage } from "@/lib/chat";
+import { createChatSession, importChatGPTSharedChat, listLocalChatModels, sendChatMessage, verifyLocalChatModel } from "@/lib/chat";
 import type { ChatMessage, ChatSession } from "@/lib/types";
 
 const session: ChatSession = {
@@ -43,7 +43,7 @@ const assistant: ChatMessage = {
 const refetch = vi.fn().mockResolvedValue(undefined);
 const authTest = vi.hoisted(() => ({ user: { id: "user-a" } as { id: string } | null, loading: false }));
 vi.mock("@/lib/auth", () => ({ useAuth: () => ({ user: authTest.user, loading: authTest.loading, can: () => true }) }));
-afterEach(() => { assistant.error_code = null; session.credential_source = "system"; authTest.user = { id: "user-a" }; authTest.loading = false; });
+afterEach(() => { assistant.error_code = null; session.credential_source = "system"; session.provider_name = "deepseek"; session.model_name = "deepseek-test"; authTest.user = { id: "user-a" }; authTest.loading = false; });
 
 vi.mock("@/lib/chat", () => ({
   listChatSessions: vi.fn(),
@@ -55,6 +55,8 @@ vi.mock("@/lib/chat", () => ({
   summarizeChatSession: vi.fn(),
   listPersonalChatModels: vi.fn().mockImplementation(async (provider) => ({ provider, models: ["personal-test-model", "deepseek-test"] })),
   verifyPersonalChatModel: vi.fn().mockImplementation(async (provider, _key, model) => ({ provider, model_name: model, verified: true })),
+  listLocalChatModels: vi.fn().mockImplementation(async (provider) => ({ provider, models: ["local-model-a", "local-model-b"] })),
+  verifyLocalChatModel: vi.fn().mockImplementation(async (provider, model_name) => ({ provider, model_name, verified: true })),
 }));
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey }: { queryKey: string[] }) => {
@@ -65,6 +67,8 @@ vi.mock("@tanstack/react-query", () => ({
       return { data: [
         { id: "deepseek", configured: true, reachable: null, chat_active: true, model: "deepseek-test" },
         { id: "openai", configured: false, reachable: null, chat_active: false, model: "gpt-test" },
+        { id: "ollama", configured: true, reachable: null, chat_active: false, model: "operator-default" },
+        { id: "local_openai", configured: true, reachable: null, chat_active: false, model: "" },
       ] };
     }
     return { data: [assistant], refetch, isLoading: false };
@@ -252,4 +256,74 @@ it("keeps server-authenticated hydration stable but clears drafts on a real acco
   authTest.user = { id: "user-b" };
   page.rerender(<ChatPage initial={initial} />);
   expect(screen.getByLabelText("chatMessage")).toHaveValue("");
+});
+
+async function chooseLocalModel(provider = "ollama") {
+  fireEvent.change(screen.getByLabelText("provider"), { target: { value: provider } });
+  fireEvent.click(await screen.findByRole("button", { name: "Tải danh sách mô hình cục bộ" }));
+  await screen.findByRole("option", { name: "local-model-b" });
+  fireEvent.change(screen.getByLabelText("Mô hình cục bộ"), { target: { value: "local-model-b" } });
+  fireEvent.click(screen.getByRole("button", { name: "Kiểm tra mô hình cục bộ" }));
+  await screen.findByText(/Đã kiểm tra mô hình local-model-b/);
+}
+
+it("requires a verified local model and creates a keyless system session with that exact model", async () => {
+  vi.mocked(createChatSession).mockClear();
+  vi.mocked(createChatSession).mockResolvedValue({ ...session, id: "local-created", provider_name: "ollama", model_name: "local-model-b" });
+  render(<ChatPage />);
+  fireEvent.click(screen.getByRole("button", { name: /newChat/ }));
+  fireEvent.change(screen.getByLabelText("provider"), { target: { value: "ollama" } });
+  await screen.findByLabelText("Mô hình cục bộ");
+  expect(screen.getByRole("button", { name: "createChat" })).toBeDisabled();
+  await chooseLocalModel();
+  expect(listLocalChatModels).toHaveBeenCalledWith("ollama", expect.any(AbortSignal));
+  expect(verifyLocalChatModel).toHaveBeenCalledWith("ollama", "local-model-b", expect.any(AbortSignal));
+  expect(createChatSession).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "createChat" }));
+  await waitFor(() => expect(createChatSession).toHaveBeenCalledWith({
+    title: undefined, scope_type: "graph", scope_id: undefined,
+    provider: "ollama", credential_source: "system", model_name: "local-model-b",
+  }));
+});
+
+it("invalidates a verified local model when switching providers and requires a fresh check on return", async () => {
+  render(<ChatPage />);
+  fireEvent.click(screen.getByRole("button", { name: /newChat/ }));
+  await chooseLocalModel();
+  expect(screen.getByRole("button", { name: "createChat" })).toBeEnabled();
+  fireEvent.change(screen.getByLabelText("provider"), { target: { value: "local_openai" } });
+  expect(screen.getByRole("button", { name: "createChat" })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("provider"), { target: { value: "ollama" } });
+  await screen.findByLabelText("Mô hình cục bộ");
+  expect(screen.getByRole("button", { name: "createChat" })).toBeDisabled();
+  expect(screen.getByLabelText("Mô hình cục bộ")).toBeDisabled();
+});
+
+it("pins the selected local model when importing a shared chat", async () => {
+  vi.mocked(importChatGPTSharedChat).mockClear();
+  vi.mocked(importChatGPTSharedChat).mockResolvedValue({ ...session, id: "local-import", provider_name: "local_openai", model_name: "local-model-b" });
+  render(<ChatPage />);
+  fireEvent.click(screen.getByRole("button", { name: "importChatGPT" }));
+  fireEvent.change(screen.getByLabelText("chatGPTSharedLink"), { target: { value: "https://chatgpt.com/share/local-fixture" } });
+  await chooseLocalModel("local_openai");
+  fireEvent.click(screen.getByRole("button", { name: "importChat" }));
+  await waitFor(() => expect(importChatGPTSharedChat).toHaveBeenCalledWith({
+    url: "https://chatgpt.com/share/local-fixture", provider: "local_openai",
+    credential_source: "system", model_name: "local-model-b",
+  }));
+});
+
+it("reopens an existing local session with its pinned model and sends without a key or new verification", async () => {
+  session.provider_name = "local_openai";
+  session.model_name = "pinned-installed-model";
+  vi.mocked(sendChatMessage).mockClear();
+  vi.mocked(verifyLocalChatModel).mockClear();
+  render(<ChatPage />);
+  expect(await screen.findByText("Mô hình cố định · pinned-installed-model")).toBeInTheDocument();
+  expect(screen.getByLabelText("chatMessage")).toBeEnabled();
+  fireEvent.change(screen.getByLabelText("chatMessage"), { target: { value: "Tiếp tục trao đổi" } });
+  fireEvent.click(screen.getByRole("button", { name: "sendMessage" }));
+  await waitFor(() => expect(sendChatMessage).toHaveBeenCalledWith("session-1", "Tiếp tục trao đổi"));
+  expect(verifyLocalChatModel).not.toHaveBeenCalled();
+  expect(screen.queryByLabelText("API key cá nhân")).not.toBeInTheDocument();
 });

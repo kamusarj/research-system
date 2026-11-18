@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 ChatScopeType = Literal["graph", "pillar", "node", "document", "change_set", "gap"]
 
@@ -25,9 +25,7 @@ class ChatModelsRequest(PersonalKeyRequest):
 
 
 class ChatVerifyRequest(ChatModelsRequest):
-    model_name: str = Field(
-        min_length=1, max_length=200, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$"
-    )
+    model_name: str = Field(min_length=1, max_length=200, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$")
 
 
 class ChatModelsRead(BaseModel):
@@ -41,9 +39,39 @@ class ChatVerificationRead(BaseModel):
     verified: Literal[True] = True
 
 
+class LocalChatModelsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: Literal["ollama", "local_openai"]
+
+
+class LocalChatVerifyRequest(LocalChatModelsRequest):
+    model_name: str = Field(min_length=1, max_length=200, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$")
+
+
+class LocalChatModelsRead(BaseModel):
+    provider: Literal["ollama", "local_openai"]
+    models: list[str]
+
+
+class LocalChatVerificationRead(BaseModel):
+    provider: Literal["ollama", "local_openai"]
+    model_name: str
+    verified: Literal[True] = True
+
+
 class ChatConnectionRequest(PersonalKeyRequest):
     provider: (
-        Literal["openai", "deepseek", "claude_code", "codex", "antigravity", "chatgpt_plan"] | None
+        Literal[
+            "openai",
+            "deepseek",
+            "claude_code",
+            "codex",
+            "antigravity",
+            "chatgpt_plan",
+            "ollama",
+            "local_openai",
+        ]
+        | None
     ) = None
     credential_source: Literal["system", "personal"] = "system"
     model_name: str | None = Field(
@@ -57,8 +85,10 @@ class ChatConnectionRequest(PersonalKeyRequest):
                 raise ValueError("Personal chat requires provider, model and API key")
             if self.provider not in {"openai", "deepseek"}:
                 raise ValueError("Personal API keys are only supported for OpenAI and DeepSeek")
-        elif self.personal_api_key is not None or self.model_name is not None:
-            raise ValueError("System chat cannot override credentials or model")
+        elif self.personal_api_key is not None:
+            raise ValueError("System chat cannot override credentials")
+        elif self.model_name is not None and self.provider not in {"ollama", "local_openai"}:
+            raise ValueError("Only local system chat can select an installed model")
         return self
 
 

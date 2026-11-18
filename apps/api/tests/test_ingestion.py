@@ -33,6 +33,7 @@ def test_provider_registry_never_exposes_keys(client):
     providers = response.json()
     assert {item["id"] for item in providers} == {
         "ollama",
+        "local_openai",
         "openai",
         "deepseek",
         "gemini",

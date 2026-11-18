@@ -26,6 +26,12 @@ x-app-environment: &app-environment
   AI_PROVIDER: ${AI_PROVIDER:-mistral}
   OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
   OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
+  OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+  # Máy chủ tương thích OpenAI cục bộ (ví dụ LM Studio); endpoint/key chỉ do operator đặt.
+  LOCAL_OPENAI_BASE_URL: ${LOCAL_OPENAI_BASE_URL:-}
+  LOCAL_OPENAI_API_KEY: ${LOCAL_OPENAI_API_KEY:-}
+  LOCAL_OPENAI_MODEL: ${LOCAL_OPENAI_MODEL:-}
+  LOCAL_AI_MAX_RESPONSE_BYTES: ${LOCAL_AI_MAX_RESPONSE_BYTES:-2000000}
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
   OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-luna}
   GRAPH_CHAT_DEFAULT_PROVIDER: ${GRAPH_CHAT_DEFAULT_PROVIDER:-deepseek}
@@ -180,6 +186,9 @@ x-app-environment: &app-environment
   SEARCH_MAX_RESULTS: ${SEARCH_MAX_RESULTS:-100}
 
 services:
+  # Cầu nối giới hạn (chỉ danh mục + sinh nội dung) từ container tới Ollama trên loopback
+  # của máy chủ hoặc đầu SSH tunnel. Không mở cổng model ra Internet; xem
+  # `Docs/Local Model Deployment Plan.md`.
   ollama-bridge:
     profiles: ["local-ai"]
     image: ${COMPOSE_PROJECT_NAME:-businessaiagents}-api
@@ -192,12 +201,36 @@ services:
     pids_limit: 64
     network_mode: host
     environment:
-      OLLAMA_BRIDGE_UPSTREAM: ${OLLAMA_BRIDGE_UPSTREAM:-http://127.0.0.1:11434}
+      LOCAL_MODEL_BRIDGE_PROTOCOL: ollama
+      LOCAL_MODEL_BRIDGE_UPSTREAM: ${OLLAMA_BRIDGE_UPSTREAM:-http://127.0.0.1:11434}
+      LOCAL_AI_MAX_RESPONSE_BYTES: ${LOCAL_AI_MAX_RESPONSE_BYTES:-2000000}
       OLLAMA_BRIDGE_BIND: ${OLLAMA_BRIDGE_BIND:-172.17.0.1}
       OLLAMA_BRIDGE_PORT: ${OLLAMA_BRIDGE_PORT:-11435}
     volumes:
       - ./apps/api:/app:ro
     command: sh -c "uvicorn app.ollama_bridge:app --host $${OLLAMA_BRIDGE_BIND} --port $${OLLAMA_BRIDGE_PORT}"
+
+  # Cầu nối tương tự cho máy chủ OpenAI-compatible (ví dụ LM Studio) trên loopback/tunnel.
+  local-openai-bridge:
+    profiles: ["local-ai"]
+    image: ${COMPOSE_PROJECT_NAME:-businessaiagents}-api
+    build: ./apps/api
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    network_mode: host
+    environment:
+      LOCAL_MODEL_BRIDGE_PROTOCOL: openai_compatible
+      LOCAL_MODEL_BRIDGE_UPSTREAM: ${LOCAL_OPENAI_BRIDGE_UPSTREAM:-http://127.0.0.1:1234}
+      LOCAL_AI_MAX_RESPONSE_BYTES: ${LOCAL_AI_MAX_RESPONSE_BYTES:-2000000}
+      LOCAL_MODEL_BRIDGE_BIND: ${LOCAL_OPENAI_BRIDGE_BIND:-172.17.0.1}
+      LOCAL_MODEL_BRIDGE_PORT: ${LOCAL_OPENAI_BRIDGE_PORT:-11437}
+    volumes:
+      - ./apps/api:/app:ro
+    command: sh -c "uvicorn app.ollama_bridge:app --host $${LOCAL_MODEL_BRIDGE_BIND} --port $${LOCAL_MODEL_BRIDGE_PORT}"
 
   database:
     image: pgvector/pgvector:0.8.5-pg16-bookworm@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb

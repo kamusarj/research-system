@@ -318,7 +318,10 @@ def graph_chat_provider(
 ) -> GraphChatProvider:
     # Nhập muộn vì nhà cung cấp CLI dùng lại các kiểu phản hồi khai báo trong module này.
     from app.services.providers.cli_bridge import CLI_PROVIDERS, CliGraphChatProvider
+    from app.services.providers.local_models import LOCAL_PROVIDERS, LocalGraphChatProvider
 
+    if name in LOCAL_PROVIDERS:
+        return LocalGraphChatProvider(name, api_key=api_key, model=model)
     if name in CLI_PROVIDERS:
         return CliGraphChatProvider(name, api_key=api_key, model=model)
     if name == "chatgpt_plan":
