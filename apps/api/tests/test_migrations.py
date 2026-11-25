@@ -59,6 +59,36 @@ def test_the_newest_migration_can_be_reversed_and_reapplied(migrated_url):
     assert up.returncode == 0, up.stderr
 
 
+def test_lease_fencing_migration_preserves_existing_runs(tmp_path):
+    url = f"sqlite:///{tmp_path / 'lease-backfill.db'}"
+    before = _alembic(url, "upgrade", "7d9f1b3c5e68")
+    assert before.returncode == 0, before.stderr
+    engine = sa.create_engine(url)
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text("""
+            INSERT INTO research_runs (
+                id, question, status, stage, variant, config_json, checkpoint_json, metrics_json,
+                attempt_count, cancel_requested, created_by, created_at
+            ) VALUES (
+                'synthetic-existing-run', 'Synthetic migration question', 'running', 'verifying',
+                'optimized', '{}', '{}', '{"llm_calls": 3}', 2, 0, 'audit', '2026-01-01'
+            )
+        """)
+        )
+    upgraded = _alembic(url, "upgrade", "head")
+    assert upgraded.returncode == 0, upgraded.stderr
+    with engine.connect() as connection:
+        row = connection.execute(
+            sa.text("""
+            SELECT status, stage, metrics_json, attempt_count, lease_token FROM research_runs
+            WHERE id = 'synthetic-existing-run'
+        """)
+        ).one()
+    assert row == ("running", "verifying", '{"llm_calls": 3}', 2, None)
+    engine.dispose()
+
+
 def test_a_duplicate_recorded_before_the_column_existed_is_given_its_origin(tmp_path):
     """The rows this backfill exists for duplicated sources that were rejected later.
 
@@ -100,9 +130,7 @@ def test_a_duplicate_recorded_before_the_column_existed_is_given_its_origin(tmp_
 
     with engine.connect() as connection:
         origins = dict(
-            connection.execute(
-                sa.text("SELECT id, duplicate_of_id FROM link_submissions")
-            ).all()
+            connection.execute(sa.text("SELECT id, duplicate_of_id FROM link_submissions")).all()
         )
 
     assert origins["copy"] == "original"

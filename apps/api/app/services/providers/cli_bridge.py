@@ -20,6 +20,10 @@ from app.services.providers.openai_graph_chat import GraphProviderResponse, Grap
 CLI_PROVIDERS = ("claude_code", "codex", "antigravity")
 
 
+class BridgeProtocolError(ValueError):
+    """Cầu nối trả về phản hồi sai giao kèo — lỗi nhà cung cấp, không phải output của model."""
+
+
 def cli_model(backend: str) -> str:
     return {
         "claude_code": settings.claude_code_model,
@@ -72,9 +76,12 @@ def bridge_complete(
         timeout=settings.ai_cli_timeout_seconds + 60,
     )
     response.raise_for_status()
-    payload = response.json()
+    try:
+        payload = response.json()
+    except ValueError as error:
+        raise BridgeProtocolError("AI CLI bridge returned a non-JSON response") from error
     if not isinstance(payload, dict) or not isinstance(payload.get("output"), dict):
-        raise ValueError("AI CLI bridge returned an invalid response")
+        raise BridgeProtocolError("AI CLI bridge returned an invalid response")
     return payload
 
 

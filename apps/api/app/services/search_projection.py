@@ -848,6 +848,9 @@ class PgvectorProjection:
         limit: int,
         research_id: str | None = None,
         approved_only: bool = False,
+        type_filter: str | None = None,
+        collection_method: str | None = None,
+        tag: str | None = None,
     ) -> list[tuple[str, str, str, float]]:
         """Return ``(chunk_id, research_id, content, distance)`` by ascending distance.
 
@@ -871,10 +874,20 @@ class PgvectorProjection:
         ).order_by("distance")
         if research_id is not None:
             statement = statement.where(SearchVectorProjection.research_id == research_id)
-        if approved_only:
+        if approved_only or type_filter or collection_method or tag:
             statement = statement.join(
                 ResearchItem, ResearchItem.id == SearchVectorProjection.research_id
-            ).where(ResearchItem.status == "approved")
+            )
+        if approved_only:
+            statement = statement.where(ResearchItem.status == "approved")
+        if type_filter:
+            statement = statement.where(ResearchItem.type == type_filter)
+        if collection_method:
+            statement = statement.where(ResearchItem.collection_method == collection_method)
+        if tag:
+            from app.models import Tag
+
+            statement = statement.where(ResearchItem.tags.any(Tag.name == tag.lower()))
         fetch = min(max(limit * 3, 10), settings.search_max_results)
         statement = statement.limit(fetch)
         try:
@@ -954,11 +967,29 @@ class PgvectorProjection:
             remaining.pop(best_index)
         return selected
 
-    def search(self, db: Session, query: str, limit: int) -> list[str]:
+    def search(
+        self,
+        db: Session,
+        query: str,
+        limit: int,
+        *,
+        type_filter: str | None = None,
+        collection_method: str | None = None,
+        tag: str | None = None,
+    ) -> list[str]:
         vector = self.embedding_client.embed_query(query)
         max_distance = max(0.0, min(settings.search_semantic_max_distance, 2.0))
         lambda_mmr = settings.search_mmr_lambda
-        candidates = self._search_chunks(db, vector, limit=limit, approved_only=True)
+        filters = {
+            name: value
+            for name, value in (
+                ("type_filter", type_filter), ("collection_method", collection_method), ("tag", tag)
+            )
+            if value
+        }
+        candidates = self._search_chunks(
+            db, vector, limit=limit, approved_only=True, **filters
+        )
         candidates = [c for c in candidates if c[3] <= max_distance]
         selected_chunk_ids = self._mmr_select(candidates, lambda_mmr=lambda_mmr, limit=limit)
         candidate_by_id = {chunk_id: research_id for chunk_id, research_id, _c, _d in candidates}

@@ -151,6 +151,7 @@ def projection_rows(
             "graph_id": edge.id,
             "edge_type": edge.type,
             "confidence": edge.confidence,
+            "hierarchy_secondary": edge.hierarchy_secondary,
             "payload_json": _json(payload),
             "sync_id": sync_id,
         }
@@ -220,9 +221,7 @@ class Neo4jProjectionClient:
         session.execute_write(lambda tx: tx.run(NODE_CONSTRAINT).consume())
         session.execute_write(lambda tx: tx.run(EDGE_CONSTRAINT).consume())
 
-    def _replace_tx(
-        self, tx: Any, rows_by_view: dict[str, ProjectionRows], sync_id: str
-    ) -> None:
+    def _replace_tx(self, tx: Any, rows_by_view: dict[str, ProjectionRows], sync_id: str) -> None:
         for projection in PROJECTION_VIEWS:
             rows = rows_by_view[projection]
             for batch in _batches(rows.nodes, self.batch_size):
@@ -298,6 +297,7 @@ class Neo4jProjectionClient:
         node_limit = min(query.limit, settings.graph_max_node_limit)
         max_depth = max(1, min(settings.graph_max_depth, 10))
         depth = min(query.depth, max_depth)
+        direction = "->" if projection == "hierarchy" else "-"
         node_query = f"""
         MATCH (node:{NODE_LABEL} {{projection: $projection}})
         WHERE (
@@ -307,9 +307,13 @@ class Neo4jProjectionClient:
             MATCH path=(root:{NODE_LABEL} {{
               projection: $projection,
               graph_id: $root_id
-            }})-[:{EDGE_TYPE}*1..{max_depth}]-(node)
+            }})-[:{EDGE_TYPE}*1..{max_depth}]{direction}(node)
             WHERE length(path) <= $depth
-              AND all(edge IN relationships(path) WHERE edge.projection = $projection)
+              AND all(edge IN relationships(path) WHERE
+                edge.projection = $projection AND (
+                  $projection <> 'hierarchy' OR NOT coalesce(edge.hierarchy_secondary, false)
+                )
+              )
           }}
         )
           AND (size($node_types) = 0 OR node.node_type IN $node_types)
@@ -377,8 +381,7 @@ class Neo4jProjectionClient:
         edge_records = edge_records[:edge_limit]
         try:
             nodes = [
-                GraphNode.model_validate(json.loads(record["payload_json"]))
-                for record in records
+                GraphNode.model_validate(json.loads(record["payload_json"])) for record in records
             ]
             edges = [
                 GraphEdge.model_validate(json.loads(record["payload_json"]))
@@ -394,6 +397,7 @@ class Neo4jProjectionClient:
                     truncated=node_truncated or edge_truncated,
                     provider="neo4j",
                     view=query.view,
+                    node_limit=node_limit,
                 ),
             )
         except (json.JSONDecodeError, TypeError, ValidationError, ValueError) as exc:

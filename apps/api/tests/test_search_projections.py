@@ -713,3 +713,69 @@ def test_hybrid_search_fuses_lexical_and_semantic_and_is_disabled_by_default(cli
     payload = response.json()
     assert payload["items"][0]["id"] == item["id"]
     assert payload["page_size"] == 5
+
+
+@pytest.mark.parametrize(
+    "filters,expected",
+    [
+        ({"type": "reference"}, {"good", "wrong_collection", "wrong_tag"}),
+        ({"collection_method": "upload"}, {"good", "wrong_type", "wrong_tag"}),
+        ({"tag": "RAG"}, {"good", "wrong_type", "wrong_collection"}),
+        ({"type": "reference", "collection_method": "upload", "tag": "RAG"}, {"good"}),
+    ],
+)
+def test_hybrid_fallback_honors_all_filters(client, monkeypatch, filters, expected):
+    monkeypatch.setattr(settings, "search_hybrid_enabled", True)
+    monkeypatch.setattr(settings, "vector_data_provider", "postgres")
+    monkeypatch.setattr(settings, "search_data_provider", "postgres")
+    ids = {}
+    for name, kind, collection, tags in (
+        ("good", "reference", "upload", ["RAG"]),
+        ("wrong_type", "internal-research", "upload", ["RAG"]),
+        ("wrong_collection", "reference", "manual", ["RAG"]),
+        ("wrong_tag", "reference", "upload", ["Tools"]),
+    ):
+        response = client.post("/api/v1/research", json={
+            "title": f"Hybrid {name}", "type": kind, "collection_method": collection,
+            "tags": tags, "content": "Hybrid retrieval evidence",
+        })
+        assert response.status_code == 201
+        ids[name] = approve(client, response.json())["id"]
+
+    response = client.post("/api/v1/search/hybrid", json={"query": "hybrid", **filters})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert {item["id"] for item in payload["items"]} == {ids[name] for name in expected}
+    assert payload["total"] == len(expected)
+
+
+def test_hybrid_rechecks_stale_vector_hits_before_limit(client, db, monkeypatch):
+    from app.models import ResearchItem
+
+    good = approve(client, create_item(client, "Hybrid target", ["RAG"]))
+    wrong_tag = approve(client, create_item(client, "Hybrid wrong tag", ["Tools"]))
+    archived = approve(client, create_item(client, "Hybrid archived", ["RAG"]))
+    db.get(ResearchItem, archived["id"]).status = "archived"
+    db.commit()
+    monkeypatch.setattr(settings, "search_hybrid_enabled", True)
+    monkeypatch.setattr(settings, "vector_data_provider", "pgvector")
+    monkeypatch.setattr(settings, "search_data_provider", "postgres")
+    monkeypatch.setattr(
+        "app.api.search.embedding_client_from_settings", lambda: DeterministicEmbeddingClient()
+    )
+    requested = []
+
+    def stale_search(_self, _db, _query, _limit, **filters):
+        requested.append(filters)
+        return [wrong_tag["id"], archived["id"], "deleted-projection", good["id"]]
+
+    monkeypatch.setattr(PgvectorProjection, "search", stale_search)
+    response = client.post(
+        "/api/v1/search/hybrid", json={"query": "hybrid", "tag": "RAG", "limit": 1}
+    )
+
+    assert response.status_code == 200
+    assert requested == [{"tag": "RAG"}]
+    assert [item["id"] for item in response.json()["items"]] == [good["id"]]
+    assert response.json()["total"] == 1

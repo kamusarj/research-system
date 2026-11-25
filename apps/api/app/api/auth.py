@@ -106,7 +106,7 @@ def login(data: LoginRequest, response: Response, db: Session = Depends(get_db))
         raise HTTPException(429, "Too many failed sign-in attempts for this account")
     user = authenticate_user(db, data.email, data.password)
     if user is None:
-        rate_limiter.record(LOGIN_FAILURE_BUCKET, data.email)
+        rate_limiter.record(LOGIN_FAILURE_BUCKET, data.email, window)
         raise HTTPException(401, "Invalid email or password")
     created = create_session(db, user)
     _set_auth_cookies(response, created.token, created.csrf_token)

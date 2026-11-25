@@ -4,11 +4,15 @@ The browser never chooses an endpoint or provides a key. Both protocols use a
 JSON tool envelope; only the application executor can run an allowed tool.
 """
 
+import asyncio
+import contextvars
 import json
 import math
 import re
-import time
+import socket
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -17,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
 from app.core.config import settings
 from app.services.ai_output_guard import redact_credentials
+from app.services.ai_usage import report_usage_dict
 from app.services.object_storage import DocumentError
 from app.services.prompts import SYSTEM_INSTRUCTIONS
 from app.services.providers.cli_bridge import (
@@ -29,6 +34,37 @@ from app.services.providers.openai_graph_chat import GraphProviderResponse, Grap
 LOCAL_PROVIDERS = frozenset({"ollama", "local_openai"})
 MAX_MODELS = 200
 _MODEL = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}\Z")
+_DNS_WORKERS = 2
+_DNS_EXECUTOR = ThreadPoolExecutor(max_workers=_DNS_WORKERS, thread_name_prefix="local-model-dns")
+_DNS_SLOTS = threading.BoundedSemaphore(_DNS_WORKERS)
+
+
+def _request_loop() -> asyncio.AbstractEventLoop:
+    """Keep uncancellable OS DNS work outside the per-request default executor.
+
+    asyncio.run normally waits for getaddrinfo's executor during shutdown, even after the
+    request timed out. Only DNS can finish in this fixed-size pool; cancellation prevents its
+    result from starting an HTTP connection. Slots remain occupied until OS resolution ends.
+    HTTPX still sees the original hostname for Host, TLS certificate verification and SNI.
+    """
+    loop = asyncio.new_event_loop()
+
+    async def getaddrinfo(host, port, *, family=0, type=0, proto=0, flags=0):
+        while not _DNS_SLOTS.acquire(blocking=False):
+            await asyncio.sleep(0.01)
+        try:
+            future = _DNS_EXECUTOR.submit(
+                socket.getaddrinfo, host, port, family=family, type=type, proto=proto, flags=flags
+            )
+        except BaseException:
+            _DNS_SLOTS.release()
+            raise
+        future.add_done_callback(lambda _: _DNS_SLOTS.release())
+        return await asyncio.wrap_future(future)
+
+    loop.getaddrinfo = getaddrinfo
+    asyncio.set_event_loop(loop)
+    return loop
 
 
 def _error(code: str, status: int = 502) -> DocumentError:
@@ -86,6 +122,29 @@ def _json(value: str | bytes) -> Any:
     return json.loads(value, object_pairs_hook=_strict_object, parse_constant=_invalid_constant)
 
 
+def _reject_credentials(value: Any, secret: str) -> None:
+    """Check decoded strings and property names, not just their JSON representation."""
+    if not secret:
+        return
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, str):
+            if secret in item:
+                raise _error("CHAT_PROVIDER_FAILED")
+        elif isinstance(item, dict):
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
+
+
+def _decoded(value: str | bytes, provider: str) -> Any:
+    result = _json(value)
+    _reject_credentials(result, _configuration(provider)[2])
+    return result
+
+
 def _status_error(status: int, *, model_request: bool) -> DocumentError:
     if status == 401:
         return _error("CHAT_API_KEY_INVALID", 422)
@@ -132,38 +191,63 @@ def _request(
         headers["Content-Type"] = "application/json"
     if secret:
         headers["Authorization"] = f"Bearer {secret}"
-    deadline = time.monotonic() + deadline_seconds
+
+    async def send() -> dict[str, Any]:
+        try:
+            # Per-read HTTP timeouts alone let a server drip headers indefinitely.
+            # Cancellation closes the stream/client before returning to the caller.
+            async with asyncio.timeout(deadline_seconds):
+                async with httpx.AsyncClient(
+                    trust_env=False,
+                    follow_redirects=False,
+                    timeout=httpx.Timeout(deadline_seconds, connect=min(5.0, deadline_seconds)),
+                ) as client:
+                    async with client.stream(
+                        method, base + path, headers=headers, content=body
+                    ) as response:
+                        if not 200 <= response.status_code < 300:
+                            raise _status_error(
+                                response.status_code, model_request=payload is not None
+                            )
+                        encoding = response.headers.get("content-encoding", "identity").lower()
+                        if encoding != "identity":
+                            raise _error("CHAT_PROVIDER_FAILED")
+                        length = response.headers.get("content-length")
+                        if length is not None and (
+                            not length.isdecimal() or int(length) > maximum
+                        ):
+                            raise _error("CHAT_PROVIDER_FAILED")
+                        received = bytearray()
+                        async for chunk in response.aiter_bytes():
+                            if len(received) + len(chunk) > maximum:
+                                raise _error("CHAT_PROVIDER_FAILED")
+                            received.extend(chunk)
+                result = _decoded(bytes(received), provider)
+                if not isinstance(result, dict):
+                    raise ValueError("Expected an object")
+                return result
+        except (TimeoutError, httpx.TimeoutException):
+            raise _error("CHAT_PROVIDER_TIMEOUT", 504) from None
+        except httpx.RequestError:
+            raise _error("CHAT_PROVIDER_UNAVAILABLE", 503) from None
+        except (ValueError, TypeError, RecursionError, UnicodeError):
+            raise _error("CHAT_PROVIDER_FAILED") from None
+
+    def run() -> dict[str, Any]:
+        try:
+            with asyncio.Runner(loop_factory=_request_loop) as runner:
+                return runner.run(send())
+        finally:
+            asyncio.set_event_loop(None)
+
     try:
-        with httpx.Client(
-            trust_env=False,
-            follow_redirects=False,
-            timeout=httpx.Timeout(deadline_seconds, connect=min(5.0, deadline_seconds)),
-        ) as client:
-            with client.stream(method, base + path, headers=headers, content=body) as response:
-                if not 200 <= response.status_code < 300:
-                    raise _status_error(response.status_code, model_request=payload is not None)
-                if response.headers.get("content-encoding", "identity").lower() != "identity":
-                    raise _error("CHAT_PROVIDER_FAILED")
-                length = response.headers.get("content-length")
-                if length is not None and (not length.isdecimal() or int(length) > maximum):
-                    raise _error("CHAT_PROVIDER_FAILED")
-                received = bytearray()
-                for chunk in response.iter_bytes():
-                    if time.monotonic() > deadline:
-                        raise _error("CHAT_PROVIDER_TIMEOUT", 504)
-                    if len(received) + len(chunk) > maximum:
-                        raise _error("CHAT_PROVIDER_FAILED")
-                    received.extend(chunk)
-        result = _json(bytes(received))
-        if not isinstance(result, dict):
-            raise ValueError("Expected an object")
-        return result
-    except httpx.TimeoutException:
-        raise _error("CHAT_PROVIDER_TIMEOUT", 504) from None
-    except httpx.RequestError:
-        raise _error("CHAT_PROVIDER_UNAVAILABLE", 503) from None
-    except (ValueError, TypeError, RecursionError, UnicodeError):
-        raise _error("CHAT_PROVIDER_FAILED") from None
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return run()
+    # Synchronous provider interfaces are also used from async callers. Preserve
+    # usage/provenance context and join the worker; never leave inference running.
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(contextvars.copy_context().run, run).result()
 
 
 def list_local_models(provider: str, *, timeout: float = 5.0) -> list[str]:
@@ -216,6 +300,7 @@ def _complete(
     prompt: str,
     max_output_tokens: int,
     timeout: float | None = None,
+    observe_usage: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     _model(model)
     if (
@@ -251,6 +336,11 @@ def _complete(
             }
         )
     response = _request(provider, "POST", path, payload=payload, timeout=timeout)
+    usage = _usage(provider, response)
+    if observe_usage:
+        # A successful HTTP call can still fail content/schema validation after consuming tokens.
+        # Chat records its returned usage at the caller, so only structured inference opts in.
+        report_usage_dict(usage, prompt_chars=len(prompt))
     try:
         if provider == "ollama":
             if response.get("done") is False:
@@ -270,7 +360,7 @@ def _complete(
         secret = _configuration(provider)[2]
         if secret and secret in content:
             raise ValueError("Credential echoed in response")
-        return content, _usage(provider, response)
+        return content, usage
     except (KeyError, TypeError, ValueError, IndexError):
         raise _error("CHAT_PROVIDER_FAILED") from None
 
@@ -290,9 +380,10 @@ def complete_local_json(
         system=SYSTEM_INSTRUCTIONS,
         prompt=prompt,
         max_output_tokens=max_output_tokens,
+        observe_usage=True,
     )
     try:
-        parsed = _json(content)
+        parsed = _decoded(content, provider)
         if not isinstance(parsed, dict):
             raise ValueError("Expected JSON object")
         result = schema.model_validate_json(json.dumps(parsed), strict=True).model_dump(mode="json")
@@ -364,7 +455,7 @@ class LocalGraphChatProvider:
             timeout=self.timeout,
         )
         try:
-            raw = _json(content)
+            raw = _decoded(content, self.name)
             envelope = _Envelope.model_validate(raw)
         except (ValidationError, ValueError, TypeError, RecursionError):
             raise _error("CHAT_PROVIDER_FAILED") from None
@@ -374,7 +465,7 @@ class LocalGraphChatProvider:
             if call["name"] not in names:
                 raise _error("CHAT_TOOL_VALIDATION_FAILED")
             try:
-                arguments = _json(call["arguments_json"])
+                arguments = _decoded(call["arguments_json"], self.name)
                 if not isinstance(arguments, dict):
                     raise ValueError("Expected tool argument object")
             except (ValueError, TypeError, RecursionError):

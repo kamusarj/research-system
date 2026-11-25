@@ -69,12 +69,19 @@ def graph(
     min_confidence: float = Query(0, ge=0, le=1),
     date_from: datetime | None = None,
     date_to: datetime | None = None,
-    limit: int = Query(settings.graph_default_node_limit, ge=1, le=settings.graph_max_node_limit),
+    limit: int | None = Query(None, ge=1, le=settings.graph_max_node_limit),
     depth: int = Query(1, ge=1, le=settings.graph_max_depth),
     root_node_id: str | None = None,
     view: Literal["relationship", "hierarchy"] = "relationship",
+    full: bool = False,
     db: Session = Depends(get_db),
 ) -> GraphResponse:
+    if limit is None:
+        limit = (
+            settings.graph_max_node_limit
+            if full
+            else min(settings.graph_default_node_limit, settings.graph_max_node_limit)
+        )
     return graph_repository().query(
         db,
         _query(
@@ -131,11 +138,28 @@ def neighbors(
     node_id: str,
     limit: int = Query(10, ge=1, le=settings.graph_max_neighbors),
     depth: int = Query(1, ge=1, le=settings.graph_max_depth),
+    query: str | None = None,
+    node_types: str | None = None,
+    source_types: str | None = None,
+    min_confidence: float = Query(0, ge=0, le=1),
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
     db: Session = Depends(get_db),
 ) -> GraphResponse:
     return graph_repository().query(
         db,
-        GraphQuery(limit=limit + 1, depth=depth, root_node_id=node_id),
+        _query(
+            query,
+            node_types,
+            source_types,
+            min_confidence,
+            date_from,
+            date_to,
+            limit + 1,
+            depth,
+            node_id,
+            "relationship",
+        ),
     )
 
 

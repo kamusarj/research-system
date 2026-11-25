@@ -1,6 +1,6 @@
 ---
 name: research-eval
-description: Run the research agent evaluation set (8 Business AI Agents questions) for the naive and optimized pipeline variants and compare speed, AI calls, tokens, citation coverage, quote verification, duplicate sources and perspective coverage. Use when changing the research pipeline, prompts, search providers or models and someone asks to evaluate, benchmark or compare before/after, or types /research-eval.
+description: Run the research agent evaluation set (8 Business AI Agents questions) for the reference and optimized pipeline variants and compare speed, AI calls, tokens and report quality. Use when evaluating or benchmarking the research pipeline, or when asked for /research-eval.
 ---
 
 # Research eval
@@ -12,28 +12,31 @@ asked for.
 
 ## Steps
 
-1. Make sure the API container is up (`docker ps | grep businessaiagents-api`). The command
-   enables the pipeline for its own process only; users are not affected.
-2. Run both variants (each writes JSON inside the container):
+1. Follow `docs/evaluations/research-agent/README.md`. Use a separate, migrated evaluation database
+   and the same frozen corpus for both variants. Keep the corpus outside the repository.
+2. From `apps/api`, run the reference variant first and proceed to the optimized variant only
+   after the reference command succeeds:
 
    ```bash
-   docker exec -w /app businessaiagents-api-1 python -m app.operations research-eval \
-     --variant naive --output /tmp/research-eval-naive.json [--questions ids]
-   docker exec -w /app businessaiagents-api-1 python -m app.operations research-eval \
-     --variant optimized --output /tmp/research-eval-optimized.json [--questions ids]
+   export DATABASE_URL="${RESEARCH_EVAL_DATABASE_URL:?Set the isolated evaluation database URL}" &&
+   uv run --frozen python -m app.operations research-eval \
+     --variant reference --corpus /tmp/research-public-corpus.json \
+     --stop-on-provider-error --output /tmp/research-eval-reference.json &&
+   uv run --frozen python -m app.operations research-eval \
+     --variant optimized --corpus /tmp/research-public-corpus.json \
+     --stop-on-provider-error --output /tmp/research-eval-optimized.json
    ```
 
-   Run the optimized variant first only when you want to show cache effects; for a fair
-   before/after comparison run naive first so neither variant benefits from the other's cache.
+   Pass the same `--questions` filter to both commands for a diagnostic subset.
 3. Compare:
 
    ```bash
-   docker exec -w /app businessaiagents-api-1 python -m app.operations research-eval-compare \
-     /tmp/research-eval-naive.json /tmp/research-eval-optimized.json
+   uv run --frozen python -m app.operations research-eval-compare \
+     /tmp/research-eval-reference.json /tmp/research-eval-optimized.json
    ```
 
-4. Report the table, then call out regressions: citation_coverage below 1.0, completion_rate
-   below 1.0, perspective_coverage or entity_recall dropping, or wall time/calls rising.
+4. Report the table and any quality gate failures. A subset or stopped run is diagnostic evidence;
+   only the full set can qualify for the token KPI.
    Copy the JSON files to `docs/evaluations/research-agent/` only if asked to keep them.
 
 Metric definitions live in `apps/api/app/evaluation/research_agent.py`; the questions in

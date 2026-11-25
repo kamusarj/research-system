@@ -82,6 +82,23 @@ def test_bridge_failures_keep_background_task_error_codes(monkeypatch, status, c
     assert _enrichment_error(error.value).code == code
 
 
+@pytest.mark.parametrize("payload", [None, {}, {"output": None}, {"output": "not-an-object"}])
+def test_invalid_bridge_payloads_raise_protocol_errors(monkeypatch, payload):
+    def fake_post(url, *, headers, json, timeout):
+        if payload is None:
+            return httpx.Response(
+                200, content=b"<html>bad gateway</html>", request=httpx.Request("POST", url)
+            )
+        return httpx.Response(200, json=payload, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(cli_bridge.httpx, "post", fake_post)
+
+    with pytest.raises(cli_bridge.BridgeProtocolError) as error:
+        ai.CodexProvider().complete_json("Classify", LinkClassification)
+    assert isinstance(error.value, ValueError)
+    assert _enrichment_error(error.value).code == "AI_PROVIDER_ERROR"
+
+
 def test_cli_providers_are_listed_once_the_bridge_is_configured(monkeypatch):
     listed = {item["id"]: item for item in provider_status()}
     assert listed["codex"]["configured"] is True

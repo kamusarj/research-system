@@ -23,6 +23,7 @@ from app.services.ai_usage import (
 from app.services.prompts import SYSTEM_INSTRUCTIONS, Source, task_prompt
 from app.services.providers.cli_bridge import (
     CLI_PROVIDERS,
+    BridgeProtocolError,
     bridge_backend_available,
     bridge_complete,
     bridge_configured,
@@ -92,7 +93,7 @@ def _complete_local_structured(provider_id: str, prompt: str, schema: type[Schem
     from app.services.providers.local_models import complete_local_json
 
     try:
-        output, usage = complete_local_json(
+        output, _usage = complete_local_json(
             provider_id, prompt, schema, settings.ai_max_output_tokens
         )
     except DocumentError as exc:
@@ -111,7 +112,7 @@ def _complete_local_structured(provider_id: str, prompt: str, schema: type[Schem
             request=request,
             response=httpx.Response(status, request=request),
         ) from None
-    report_usage(**usage, prompt_chars=len(prompt))
+    # The local adapter records known usage before parsing, including invalid responses.
     return schema.model_validate(output)
 
 
@@ -523,6 +524,8 @@ def _enrichment_error(exc: Exception) -> EnrichmentProviderError | None:
         return EnrichmentProviderError("AI_PROVIDER_UNAVAILABLE", 504)
     if isinstance(exc, httpx.RequestError):
         return EnrichmentProviderError("AI_PROVIDER_UNAVAILABLE", 503)
+    if isinstance(exc, BridgeProtocolError):
+        return EnrichmentProviderError("AI_PROVIDER_ERROR", 502)
     if isinstance(exc, ValidationError | ValueError):
         return EnrichmentProviderError("AI_RESPONSE_INVALID", 502)
     return None

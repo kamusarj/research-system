@@ -69,9 +69,20 @@ def main() -> None:
     password_parser.add_argument("--email", required=True)
     password_parser.add_argument("--password-stdin", action="store_true", required=True)
     eval_parser = subparsers.add_parser("research-eval")
-    eval_parser.add_argument("--variant", choices=["optimized", "naive"], required=True)
+    eval_parser.add_argument(
+        "--variant", choices=["optimized", "naive", "reference"], required=True
+    )
     eval_parser.add_argument("--questions", help="Danh sách id câu hỏi, phân cách dấu phẩy")
     eval_parser.add_argument("--output", required=True, help="Tệp JSON kết quả")
+    eval_parser.add_argument("--corpus", type=Path, help="Bản chụp nguồn cố định cho đánh giá")
+    eval_parser.add_argument(
+        "--capture-corpus", type=Path, help="Lưu nguồn công khai ngoài repo để đánh giá lại"
+    )
+    eval_parser.add_argument(
+        "--stop-on-provider-error",
+        action="store_true",
+        help="Lưu các câu đã thử rồi dừng với mã thoát 2 khi provider lỗi",
+    )
     compare_parser = subparsers.add_parser("research-eval-compare")
     compare_parser.add_argument("baseline")
     compare_parser.add_argument("candidate")
@@ -87,9 +98,19 @@ def main() -> None:
 
         only = {item.strip() for item in args.questions.split(",")} if args.questions else None
         with SessionLocal() as db:
-            result = run_eval(db, variant=args.variant, only=only)
+            result = run_eval(
+                db,
+                variant=args.variant,
+                only=only,
+                corpus=args.corpus,
+                capture_corpus=args.capture_corpus,
+                stop_on_provider_error=args.stop_on_provider_error,
+            )
         Path(args.output).write_text(json.dumps(result, indent=2, ensure_ascii=False))
         print(json.dumps(result["summary"], indent=2, ensure_ascii=False))
+        if stopped := result.get("stopped"):
+            print(json.dumps({"stopped": stopped}, ensure_ascii=False), file=sys.stderr)
+            raise SystemExit(2)
         return
     if args.command == "research-eval-compare":
         from app.evaluation.research_agent import compare_markdown

@@ -1,8 +1,7 @@
 """Kiểm tra bản nháp của writer và dựng báo cáo Markdown có trích dẫn bấm được.
 
-Writer chỉ trả về câu + mã nhận định; máy chủ mới là nơi gắn link nguồn. Câu không còn nhận định
-hợp lệ, có số không nằm trong bằng chứng, hay chèn link/HTML đều bị loại, nên mọi câu nội dung
-trong báo cáo đều mang ít nhất một trích dẫn `[n](url)` tới nguồn đã kiểm chứng.
+Writer chọn và sắp xếp mã nhận định; máy chủ lấy nguyên văn nhận định đã kiểm chứng để dựng
+nội dung và gắn link nguồn. Không dùng độ trùng từ làm bằng chứng cho một cách diễn đạt mới.
 """
 
 import re
@@ -10,16 +9,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from app.services.research_agent.evidence import unsupported_numbers
 from app.services.research_agent.schemas import (
     PERSPECTIVE_LABELS,
     PERSPECTIVES,
     ReportDraft,
 )
 
-_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
-_URL = re.compile(r"https?://\S+|www\.\S+", re.I)
-_HTML = re.compile(r"<[^>]+>")
 _CITATION_GROUP = re.compile(r"(?:\s*\[\d+\]\((?:https?://|/research/)[^)\s]*\))+")
 META_HEADINGS = ("Khoảng trống bằng chứng", "Nguồn", "Phương pháp")
 
@@ -55,35 +50,23 @@ class ValidatedReport:
     sections: dict[str, list[ValidatedSentence]]
     violations: dict[str, int] = field(default_factory=dict)
     total_sentences: int = 0
+    accepted_draft_sentences: int = 0
 
     @property
     def kept_sentences(self) -> int:
         return sum(len(sentences) for sentences in self.sections.values())
 
 
-def _clean(text: str) -> str:
-    text = _LINK.sub(r"\1", text)
-    text = _HTML.sub("", _URL.sub("", text))
-    text = re.sub(r"\[\d+\]", "", text)  # mô hình tự đánh số trích dẫn: máy chủ sẽ gắn lại
-    return " ".join(text.split())
-
-
-MIN_SUPPORT_RATIO = 0.3
-_CONTENT_WORD = re.compile(r"\w{3,}", re.UNICODE)
-
-
-def support_ratio(text: str, evidence: str) -> float:
-    """Tỉ lệ từ nội dung (≥3 ký tự) của câu có trong nhận định/trích dẫn được dẫn."""
-    words = {word.casefold() for word in _CONTENT_WORD.findall(text)}
-    if not words:
-        return 0.0
-    available = {word.casefold() for word in _CONTENT_WORD.findall(evidence)}
-    return len(words & available) / len(words)
-
-
 def validate_draft(draft: ReportDraft, claims: dict[str, VerifiedClaim]) -> ValidatedReport:
-    report = ValidatedReport(title=_clean(draft.title)[:200] or "Báo cáo nghiên cứu", sections={})
+    """Use the writer only for selection/order, never for new factual wording.
+
+    A valid claim ID does not establish entailment of the proposed sentence. Rendering the
+    original verified text also prevents a correct sentence hiding a second unsupported assertion.
+    Keep one claim per cited block, and preserve its verified perspective outside the summary.
+    """
+    report = ValidatedReport(title="Báo cáo nghiên cứu", sections={})
     violations: dict[str, int] = {}
+    seen: set[tuple[str, str]] = set()
     for section in draft.sections:
         for sentence in section.sentences:
             report.total_sentences += 1
@@ -93,23 +76,57 @@ def validate_draft(draft: ReportDraft, claims: dict[str, VerifiedClaim]) -> Vali
             if not valid_ids:
                 violations["no_verified_claim"] = violations.get("no_verified_claim", 0) + 1
                 continue
-            text = _clean(sentence.text)
-            if not text:
-                violations["empty"] = violations.get("empty", 0) + 1
-                continue
-            evidence = " ".join(f"{claims[i].text} {claims[i].quote}" for i in valid_ids)
-            if unsupported_numbers(text, evidence):
-                violations["unsupported_number"] = violations.get("unsupported_number", 0) + 1
-                continue
-            if support_ratio(text, evidence) < MIN_SUPPORT_RATIO:
-                # Câu dẫn một nhận định nhưng nói chuyện khác: dấu hiệu bịa hoặc bị dẫn dắt.
-                violations["weak_support"] = violations.get("weak_support", 0) + 1
-                continue
-            report.sections.setdefault(section.perspective, []).append(
-                ValidatedSentence(text=text, claim_ids=valid_ids)
-            )
+            accepted = False
+            for claim_id in valid_ids:
+                claim = claims[claim_id]
+                if section.perspective not in {"summary", claim.perspective}:
+                    violations["wrong_perspective"] = violations.get("wrong_perspective", 0) + 1
+                    continue
+                text = " ".join(claim.text.split())
+                if not text:
+                    violations["empty_verified_claim"] = (
+                        violations.get("empty_verified_claim", 0) + 1
+                    )
+                    continue
+                identity = (section.perspective, claim_id)
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                accepted = True
+                report.sections.setdefault(section.perspective, []).append(
+                    ValidatedSentence(text=text, claim_ids=[claim_id])
+                )
+            if accepted:
+                report.accepted_draft_sentences += 1
+                if (
+                    len(valid_ids) != 1
+                    or sentence.text.strip() != claims[valid_ids[0]].text.strip()
+                ):
+                    violations["rewritten_to_verified_claim"] = (
+                        violations.get("rewritten_to_verified_claim", 0) + 1
+                    )
     report.violations = violations
     return report
+
+
+def add_supported_sections(
+    report: ValidatedReport, claims: dict[str, VerifiedClaim]
+) -> list[str]:
+    """Fill omitted sections with one original, verified claim per supported perspective."""
+    summary_ids = [
+        cid for sentence in report.sections.get("summary", []) for cid in sentence.claim_ids
+    ]
+    added = []
+    for claim_id in dict.fromkeys([*summary_ids, *claims]):
+        claim = claims[claim_id]
+        perspective = claim.perspective
+        if perspective not in PERSPECTIVES or report.sections.get(perspective):
+            continue
+        text = " ".join(claim.text.split())
+        if text:
+            report.sections[perspective] = [ValidatedSentence(text=text, claim_ids=[claim_id])]
+            added.append(perspective)
+    return added
 
 
 def number_sources(
@@ -138,7 +155,7 @@ def render_markdown(
 ) -> str:
     generated_at = generated_at or datetime.now(UTC)
     lines = [
-        f"# {report.title}",
+        f"# {markdown_text(report.title)}",
         "",
         f"> **Câu hỏi:** {question}",
         ">",
@@ -160,16 +177,23 @@ def render_markdown(
                 marker = f"[{number}]({markdown_url(source.url)})"
                 if marker not in cited:
                     cited.append(marker)
-            rendered.append(f"{sentence.text.rstrip()} {''.join(cited)}")
-        lines += [" ".join(rendered), ""]
+            rendered.append(f"{markdown_text(sentence.text)} {''.join(cited)}")
+        for block in rendered:
+            lines += [block, ""]
 
     covered = {perspective for perspective in PERSPECTIVES if report.sections.get(perspective)}
-    missing = [PERSPECTIVE_LABELS[p] for p in PERSPECTIVES if p not in covered]
+    available = {claim.perspective for claim in claims.values()}
+    missing = [p for p in PERSPECTIVES if p not in covered]
     if missing:
         lines += ["## Khoảng trống bằng chứng", ""]
         lines += [
-            f"- {label}: chưa tìm thấy nhận định nào đủ bằng chứng trong các nguồn đã đọc."
-            for label in missing
+            f"- {PERSPECTIVE_LABELS[p]}: "
+            + (
+                "có nhận định đã kiểm chứng, nhưng bản nháp chưa tổng hợp góc nhìn này."
+                if p in available
+                else "chưa tìm thấy nhận định nào đủ bằng chứng trong các nguồn đã đọc."
+            )
+            for p in missing
         ]
         lines.append("")
 

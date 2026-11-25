@@ -1,5 +1,6 @@
 import json
 import sys
+from contextlib import nullcontext
 
 import pytest
 
@@ -99,3 +100,31 @@ def test_verify_chat_provider_uses_configured_deepseek_without_leaking(monkeypat
     assert result["output_present"] is True
     assert "secret-value" not in output.out
     assert "provider output" not in output.out
+
+
+def test_research_eval_cli_saves_partial_artifact_before_exit(db, monkeypatch, capsys, tmp_path):
+    from app import operations
+    from app.evaluation import research_agent
+
+    path = tmp_path / "partial.json"
+    stopped = {"question_id": "q1-market-size", "error_code": "AI_PROVIDER_RATE_LIMITED"}
+    artifact = {"summary": {"llm_calls": 1}, "stopped": stopped}
+
+    def run_eval(session, **kwargs):
+        assert session is db
+        assert kwargs["stop_on_provider_error"] is True
+        return artifact
+
+    monkeypatch.setattr(operations, "SessionLocal", lambda: nullcontext(db))
+    monkeypatch.setattr(research_agent, "run_eval", run_eval)
+    monkeypatch.setattr(sys, "argv", [
+        "operations", "research-eval", "--variant", "reference", "--output", str(path),
+        "--stop-on-provider-error",
+    ])
+
+    with pytest.raises(SystemExit) as caught:
+        operations.main()
+
+    assert caught.value.code == 2
+    assert json.loads(path.read_text()) == artifact
+    assert json.loads(capsys.readouterr().err) == {"stopped": stopped}

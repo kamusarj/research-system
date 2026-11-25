@@ -13,6 +13,7 @@ from app.models import (
     KnowledgeEdge,
     KnowledgeGap,
     KnowledgeNode,
+    NodeEvidence,
     ResearchItem,
     ResearchRelation,
 )
@@ -55,6 +56,71 @@ def canonical_node_index(db: Session) -> dict[tuple[str, str], KnowledgeNode]:
         if node is not None:
             index.setdefault((node.node_type, alias.normalized_alias), node)
     return index
+
+
+STRUCTURAL_EDGE_TYPES = ("PARENT_OF", "BROADER_THAN")
+
+
+def _edge_evidence(item: NodeEvidence) -> dict:
+    location = item.location if isinstance(item.location, dict) else {}
+    evidence = {}
+    for key, value in (
+        ("text", item.excerpt),
+        ("section", location.get("section") or location.get("section_heading")),
+        ("location", location.get("location")),
+    ):
+        if isinstance(value, str) and value:
+            evidence[key] = value
+    page = location.get("page")
+    if type(page) is int:
+        evidence["page"] = page
+    timestamp = location.get("timestamp_seconds")
+    if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool):
+        evidence["timestamp_seconds"] = timestamp
+    return evidence
+
+
+def _canonical_edges(
+    db: Session, node_ids: set[str], *, structural_only: bool = False
+) -> list[dict]:
+    if not node_ids:
+        return []
+    statement = select(KnowledgeEdge).where(
+        KnowledgeEdge.lifecycle_status == "approved",
+        KnowledgeEdge.source_node_id.in_(node_ids),
+        KnowledgeEdge.target_node_id.in_(node_ids),
+        KnowledgeEdge.source_node_id != KnowledgeEdge.target_node_id,
+    )
+    if structural_only:
+        statement = statement.where(KnowledgeEdge.edge_type.in_(STRUCTURAL_EDGE_TYPES))
+    rows = list(db.scalars(statement.order_by(KnowledgeEdge.id)))
+    if not rows:
+        return []
+    evidence_by_edge: dict[str, list[dict]] = {}
+    for item in db.scalars(
+        select(NodeEvidence)
+        .where(
+            NodeEvidence.owner_kind == "knowledge_edge",
+            NodeEvidence.owner_id.in_(statement.with_only_columns(KnowledgeEdge.id)),
+        )
+        .order_by(NodeEvidence.created_at, NodeEvidence.id)
+    ):
+        evidence_by_edge.setdefault(item.owner_id, []).append(_edge_evidence(item))
+    result = []
+    for edge in rows:
+        evidence = evidence_by_edge.get(edge.id, [])
+        result.append(
+            {
+                "id": edge.id,
+                "source": edge.source_node_id,
+                "target": edge.target_node_id,
+                "type": edge.edge_type,
+                "confidence": edge.confidence,
+                "evidence_count": len(evidence),
+                "evidence": evidence,
+            }
+        )
+    return result
 
 
 def graph_projection(db: Session) -> dict[str, list[dict]]:
@@ -245,24 +311,7 @@ def graph_projection(db: Session) -> dict[str, list[dict]]:
                 "evidence": evidence,
             }
 
-    if canonical_ids:
-        canonical_edges = db.scalars(
-            select(KnowledgeEdge).where(
-                KnowledgeEdge.lifecycle_status == "approved",
-                KnowledgeEdge.source_node_id.in_(canonical_ids),
-                KnowledgeEdge.target_node_id.in_(canonical_ids),
-            )
-        )
-        for edge in canonical_edges:
-            edges[edge.id] = {
-                "id": edge.id,
-                "source": edge.source_node_id,
-                "target": edge.target_node_id,
-                "type": edge.edge_type,
-                "confidence": edge.confidence,
-                "evidence_count": 0,
-                "evidence": [],
-            }
+    edges.update((edge["id"], edge) for edge in _canonical_edges(db, canonical_ids))
 
     if source_ids:
         sources = db.scalars(select(CollectorSource).where(CollectorSource.id.in_(source_ids)))
@@ -329,11 +378,6 @@ def ontology_graph_projection(db: Session) -> dict[str, list[dict]]:
         )
     )
     node_ids = {node.id for node in ontology_nodes}
-    children: dict[str, int] = {}
-    for node in ontology_nodes:
-        if node.primary_parent_id in node_ids:
-            children[node.primary_parent_id] = children.get(node.primary_parent_id, 0) + 1
-
     nodes = [
         {
             "id": node.id,
@@ -344,53 +388,17 @@ def ontology_graph_projection(db: Session) -> dict[str, list[dict]]:
             "source_count": 0,
             "published": True,
             "primary_parent_id": node.primary_parent_id,
-            "child_count": children.get(node.id, 0),
             "lifecycle_status": node.lifecycle_status,
             "provenance": {
                 "created_by_type": node.created_by_type,
                 "created_by_ref": node.created_by_ref or "",
             },
-            "degree": children.get(node.id, 0) + (1 if node.primary_parent_id else 0),
         }
         for node in ontology_nodes
     ]
-    edges: list[dict] = [
-        {
-            "id": f"hierarchy:{node.primary_parent_id}:{node.id}",
-            "source": node.primary_parent_id,
-            "target": node.id,
-            "type": "PARENT_OF",
-            "confidence": 1,
-            "evidence_count": 0,
-        }
-        for node in ontology_nodes
-        if node.primary_parent_id in node_ids
-    ]
-    secondary_edges = db.scalars(
-        select(KnowledgeEdge).where(
-            KnowledgeEdge.lifecycle_status == "approved",
-            KnowledgeEdge.edge_type.in_(("PARENT_OF", "BROADER_THAN")),
-        )
+    return _hierarchy_projection(
+        nodes, _canonical_edges(db, node_ids, structural_only=True), system=True
     )
-    existing_edge_keys = {(edge["source"], edge["target"], edge["type"]) for edge in edges}
-    for edge in secondary_edges:
-        if (
-            (edge.source_node_id, edge.target_node_id, edge.edge_type) in existing_edge_keys
-            or edge.source_node_id not in node_ids
-            or edge.target_node_id not in node_ids
-        ):
-            continue
-        edges.append(
-            {
-                "id": edge.id,
-                "source": edge.source_node_id,
-                "target": edge.target_node_id,
-                "type": edge.edge_type,
-                "confidence": edge.confidence,
-                "evidence_count": 0,
-            }
-        )
-    return {"nodes": nodes, "edges": edges}
 
 
 HIERARCHY_MEMBERSHIP_PRIORITY = {
@@ -404,70 +412,114 @@ HIERARCHY_MEMBERSHIP_PRIORITY = {
 }
 
 
-def knowledge_hierarchy_projection(db: Session) -> dict[str, list[dict]]:
-    """Render the approved relationship corpus as a deterministic hierarchy forest.
-
-    Relationship membership runs from research -> taxonomy in the network. Hierarchy presentation
-    reverses that direction so a concept/technology/pattern/domain/source becomes the parent of the
-    research it describes. A node receives one deterministic display parent; non-hierarchical
-    cross-relations remain available in relationship view. The node corpus is intentionally
-    identical between the two views.
-    """
-
-    relationship = graph_projection(db)
-    nodes = [dict(node) for node in relationship["nodes"]]
+def _hierarchy_projection(
+    nodes: list[dict], edges: list[dict], *, system: bool = False
+) -> dict[str, list[dict]]:
     by_id = {node["id"]: node for node in nodes}
-    parent_candidates: dict[str, list[tuple[int, str, dict]]] = {}
+    explicit_edges = [edge for edge in edges if edge["type"] in STRUCTURAL_EDGE_TYPES]
+    explicit_pairs = {(edge["source"], edge["target"]) for edge in explicit_edges}
+    candidates: list[tuple[int, dict]] = []
 
-    for node in nodes:
+    for edge in explicit_edges:
+        priority = -2 if edge["type"] == "PARENT_OF" else -1
+        if by_id[edge["target"]].get("primary_parent_id") == edge["source"]:
+            priority -= 2
+        candidates.append((priority, edge))
+
+    edge_prefix = "hierarchy" if system else "knowledge-hierarchy"
+    for child_id, node in by_id.items():
         parent_id = node.get("primary_parent_id")
-        if parent_id in by_id:
-            parent_candidates.setdefault(node["id"], []).append(
-                (-1, str(parent_id), {"type": "PARENT_OF", "confidence": 1})
+        if (
+            parent_id in by_id
+            and parent_id != child_id
+            and (parent_id, child_id) not in explicit_pairs
+        ):
+            candidates.append(
+                (
+                    -4,
+                    {
+                        "id": f"{edge_prefix}:{parent_id}:{child_id}",
+                        "source": parent_id,
+                        "target": child_id,
+                        "type": "PARENT_OF",
+                        "confidence": 1,
+                    },
+                )
             )
 
-    for edge in relationship["edges"]:
+    # Research membership points from the item to its taxonomy node in Mạng.
+    for edge in edges:
         priority = HIERARCHY_MEMBERSHIP_PRIORITY.get(str(edge.get("type")))
         if priority is None:
             continue
-        child_id = edge["source"]
-        parent_id = edge["target"]
-        if child_id not in by_id or parent_id not in by_id or child_id == parent_id:
+        child_id, parent_id = edge["source"], edge["target"]
+        candidates.append(
+            (
+                priority,
+                {
+                    **edge,
+                    "id": f"{edge_prefix}:{parent_id}:{child_id}",
+                    "source": parent_id,
+                    "target": child_id,
+                    "type": "PARENT_OF",
+                },
+            )
+        )
+
+    # Pick a single display parent without creating cycles, even for older approved
+    # explicit edges that were recorded separately from primary placement.
+    components = {node_id: node_id for node_id in by_id}
+
+    def component(node_id: str) -> str:
+        while components[node_id] != node_id:
+            components[node_id] = components[components[node_id]]
+            node_id = components[node_id]
+        return node_id
+
+    primary_edges: dict[str, dict] = {}
+    for _, edge in sorted(
+        candidates,
+        key=lambda entry: (
+            entry[0],
+            by_id[entry[1]["source"]]["label"].casefold(),
+            entry[1]["source"],
+            entry[1]["target"],
+            entry[1]["id"],
+        ),
+    ):
+        parent_id, child_id = edge["source"], edge["target"]
+        if child_id in primary_edges:
             continue
-        parent_candidates.setdefault(child_id, []).append((priority, parent_id, edge))
+        parent_component, child_component = component(parent_id), component(child_id)
+        if parent_component != child_component:
+            components[child_component] = parent_component
+            primary_edges[child_id] = edge
 
-    hierarchy_edges: list[dict] = []
-    children: dict[str, int] = {}
-    for child_id, candidates in parent_candidates.items():
-        priority, parent_id, source_edge = min(
-            candidates,
-            key=lambda candidate: (
-                candidate[0],
-                by_id[candidate[1]].get("label", "").casefold(),
-                candidate[1],
-            ),
-        )
-        del priority
-        by_id[child_id]["primary_parent_id"] = parent_id
-        children[parent_id] = children.get(parent_id, 0) + 1
-        hierarchy_edges.append(
-            {
-                "id": f"knowledge-hierarchy:{parent_id}:{child_id}",
-                "source": parent_id,
-                "target": child_id,
-                "type": "PARENT_OF",
-                "confidence": source_edge.get("confidence", 1),
-                "evidence_count": source_edge.get("evidence_count", 0),
-                "evidence": source_edge.get("evidence", []),
-            }
-        )
-
+    tree = list(primary_edges.values())
+    tree_ids = {edge["id"] for edge in tree}
+    secondary = [
+        {**edge, "hierarchy_secondary": True}
+        for edge in explicit_edges
+        if edge["id"] not in tree_ids
+    ]
+    children: dict[str, set[str]] = {}
+    parents: dict[str, set[str]] = {}
+    all_edges = tree + secondary
+    for edge in all_edges if system else tree:
+        children.setdefault(edge["source"], set()).add(edge["target"])
+        parents.setdefault(edge["target"], set()).add(edge["source"])
     for node in nodes:
-        node["child_count"] = children.get(node["id"], 0)
-        node["degree"] = children.get(node["id"], 0) + (
-            1 if node.get("primary_parent_id") in by_id else 0
-        )
-    return {"nodes": nodes, "edges": hierarchy_edges}
+        node_id = node["id"]
+        node["primary_parent_id"] = primary_edges.get(node_id, {}).get("source")
+        node["child_count"] = len(children.get(node_id, ()))
+        node["degree"] = node["child_count"] + len(parents.get(node_id, ()))
+    return {"nodes": nodes, "edges": all_edges}
+
+
+def knowledge_hierarchy_projection(db: Session) -> dict[str, list[dict]]:
+    """Build the display forest from the same approved corpus as the relationship view."""
+    relationship = graph_projection(db)
+    return _hierarchy_projection(relationship["nodes"], relationship["edges"])
 
 
 def _reachable_ids(graph: dict, root: str, depth: int, *, directed: bool = False) -> set[str]:
@@ -476,6 +528,8 @@ def _reachable_ids(graph: dict, root: str, depth: int, *, directed: bool = False
         raise HTTPException(404, "Graph node not found")
     adjacency: dict[str, set[str]] = {}
     for edge in graph["edges"]:
+        if directed and edge.get("hierarchy_secondary"):
+            continue
         adjacency.setdefault(edge["source"], set()).add(edge["target"])
         if not directed:
             adjacency.setdefault(edge["target"], set()).add(edge["source"])

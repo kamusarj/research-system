@@ -34,6 +34,7 @@ from app.services.ai import provider
 from app.services.document_graph import _extract_docx, _extract_pdf, read_stored_object
 from app.services.graph_chat import redact_cloud_text
 from app.services.object_storage import DocumentError, ObjectStorage
+from app.services.research import ensure_research_editable
 
 EDITABLE_SOURCE_SUFFIXES = {
     ".md",
@@ -192,6 +193,16 @@ def _validate_base(workspace: DocumentGraphWorkspace, base_version: int) -> None
         )
 
 
+def _editable_research(db: Session, workspace: DocumentGraphWorkspace) -> ResearchItem:
+    research = db.get(ResearchItem, workspace.research_id)
+    if research is None:
+        raise DocumentError(
+            "DOCUMENT_STORAGE_FAILED", "Document research metadata is missing", 500
+        )
+    ensure_research_editable(research)
+    return research
+
+
 async def create_source_version(
     db: Session,
     workspace: DocumentGraphWorkspace,
@@ -203,6 +214,7 @@ async def create_source_version(
     change_summary: str | None,
     accepted_proposal: DocumentAIEditProposal | None = None,
 ) -> DocumentSourceVersion:
+    research = _editable_research(db, workspace)
     _validate_base(workspace, base_version)
     attachment, current_source = await _read_source(db, workspace, storage)
     normalized = content.replace("\r\n", "\n").replace("\r", "\n")
@@ -261,11 +273,20 @@ async def create_source_version(
         created_by=actor,
     )
     try:
-        research = db.get(ResearchItem, workspace.research_id)
+        # Publishing may have happened while object storage was awaited. Refresh
+        # the canonical status and hold its row lock only for this short DB write.
+        with db.no_autoflush:
+            research = db.scalar(
+                select(ResearchItem)
+                .where(ResearchItem.id == workspace.research_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
         if research is None:
             raise DocumentError(
                 "DOCUMENT_STORAGE_FAILED", "Document research metadata is missing", 500
             )
+        ensure_research_editable(research)
         db.add(version)
         workspace.source_version = next_version
         workspace.storage_object_key = stored.key
@@ -468,6 +489,7 @@ async def accept_ai_edit(
     proposal_id: str,
     storage: ObjectStorage,
 ) -> DocumentAIEditRead:
+    _editable_research(db, workspace)
     proposal = _get_proposal(db, workspace, proposal_id)
     if proposal.status != "draft":
         raise DocumentError("AI_EDIT_STATE_CONFLICT", f"AI edit is already {proposal.status}", 409)
@@ -535,6 +557,7 @@ async def restore_source_version(
     *,
     base_version: int,
 ) -> DocumentSourceVersion:
+    _editable_research(db, workspace)
     _validate_base(workspace, base_version)
     historical = db.scalar(
         select(DocumentSourceVersion).where(

@@ -292,3 +292,39 @@ def test_local_model_compose_preserves_config_and_private_bridges(tmp_path, team
         if team:
             assert service["image"] == "businessaiagents-team-api:latest"
             assert not service.get("volumes")
+
+
+def test_fresh_team_example_connects_api_and_worker_to_private_local_bridges(tmp_path):
+    if not shutil.which("docker"):
+        pytest.skip("Docker Compose is not installed")
+    if subprocess.run(["docker", "compose", "version"], capture_output=True).returncode:
+        pytest.skip("Docker Compose is not installed")
+    root = Path(__file__).resolve().parents[3]
+    template = (root / ".env.team.example").read_text()
+    env_file = tmp_path / "team.env"
+    env_file.write_text(
+        template.replace("POSTGRES_PASSWORD=\n", "POSTGRES_PASSWORD=fixture\n")
+        .replace("COMPOSE_PROFILES=https\n", "COMPOSE_PROFILES=https,local-ai\n")
+    )
+    # An operator's shell/.env must not fill gaps in this fresh-example proof.
+    keys = {line.partition("=")[0] for line in template.splitlines() if "=" in line}
+    environment = {key: value for key, value in os.environ.items() if key not in keys}
+    result = subprocess.run(
+        [
+            "docker", "compose", "--env-file", str(env_file),
+            "-f", str(root / "docker-compose.yml"),
+            "-f", str(root / "docker-compose.team.yml"), "config", "--format", "json",
+        ],
+        env=environment, capture_output=True, text=True, check=True,
+    )
+    services = json.loads(result.stdout)["services"]
+    for service in ("api", "worker"):
+        configured = services[service]["environment"]
+        assert configured["OLLAMA_BASE_URL"] == "http://172.17.0.1:11435"
+        assert configured["LOCAL_OPENAI_BASE_URL"] == "http://172.17.0.1:11437/v1"
+        assert configured["AUTH_MODE"] == "local"
+        assert configured["AUTH_COOKIE_SECURE"] == "true"
+    for service in ("ollama-bridge", "local-openai-bridge"):
+        assert services[service]["network_mode"] == "host"
+        assert not services[service].get("ports")
+        assert not services[service].get("volumes")

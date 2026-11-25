@@ -1,10 +1,10 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.core.identity import current_principal, has_role
+from app.core.identity import current_principal
 from app.db import get_db
 from app.models import Attachment, Comment, ResearchItem, ResearchRelation, ResearchVersion, Tag
 from app.schemas.research import (
@@ -23,6 +23,7 @@ from app.schemas.research import (
 from app.services.research import (
     add_comment,
     add_relation,
+    create_attachment,
     create_research,
     get_research_or_404,
     serialize_research,
@@ -91,15 +92,6 @@ def get(research_id: str, db: Session = Depends(get_db)) -> ResearchRead:
 @router.put("/{research_id}", response_model=ResearchRead)
 def update(research_id: str, data: ResearchUpdate, db: Session = Depends(get_db)) -> ResearchRead:
     item = get_research_or_404(db, research_id)
-    principal = current_principal()
-    # Nội dung đang chờ duyệt hoặc đã xuất bản là thứ chủ sở hữu đã/đang kiểm duyệt; nhà nghiên
-    # cứu sửa nó sẽ vượt qua bước duyệt, nên chỉ chủ sở hữu được sửa ở các trạng thái này.
-    if (
-        item.status in {"in-review", "approved"}
-        and principal is not None
-        and not has_role(principal.role, "owner")
-    ):
-        raise HTTPException(403, "Only the owner can edit research under review or approved")
     return serialize_research(update_research(db, item, data))
 
 
@@ -187,8 +179,4 @@ def add_attachment(
     research_id: str, data: AttachmentCreate, db: Session = Depends(get_db)
 ) -> Attachment:
     item = get_research_or_404(db, research_id)
-    attachment = Attachment(research_id=item.id, **data.model_dump())
-    db.add(attachment)
-    db.commit()
-    db.refresh(attachment)
-    return attachment
+    return create_attachment(db, item, data)

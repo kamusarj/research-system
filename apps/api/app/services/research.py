@@ -5,7 +5,9 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.identity import current_principal, has_role
 from app.models import (
+    Attachment,
     AuditEvent,
     Comment,
     OutboxEvent,
@@ -14,7 +16,7 @@ from app.models import (
     ResearchVersion,
     Tag,
 )
-from app.schemas.research import ResearchCreate, ResearchRead, ResearchUpdate
+from app.schemas.research import AttachmentCreate, ResearchCreate, ResearchRead, ResearchUpdate
 
 
 def normalize_tag(value: str) -> str:
@@ -53,6 +55,19 @@ def get_research_or_404(db: Session, research_id: str) -> ResearchItem:
     if not item:
         raise HTTPException(404, "Research item not found")
     return item
+
+
+def ensure_research_editable(item: ResearchItem) -> None:
+    """Protect reviewed content at the service boundary, including alternate editors."""
+    principal = current_principal()
+    if (
+        item.status in {"in-review", "approved"}
+        and principal is not None
+        and not has_role(principal.role, "owner")
+    ):
+        raise HTTPException(
+            403, "Chỉ chủ sở hữu được sửa nghiên cứu đang chờ duyệt hoặc đã xuất bản."
+        )
 
 
 def sync_tags(db: Session, item: ResearchItem, values: list[str]) -> None:
@@ -110,6 +125,7 @@ def create_research(db: Session, data: ResearchCreate, *, commit: bool = True) -
 
 
 def update_research(db: Session, item: ResearchItem, data: ResearchUpdate) -> ResearchItem:
+    ensure_research_editable(item)
     version_number = db.scalar(
         select(func.count())
         .select_from(ResearchVersion)
@@ -167,6 +183,15 @@ def add_comment(db: Session, item: ResearchItem, body: str, author: str) -> Comm
     return comment
 
 
+def create_attachment(db: Session, item: ResearchItem, data: AttachmentCreate) -> Attachment:
+    ensure_research_editable(item)
+    attachment = Attachment(research_id=item.id, **data.model_dump())
+    db.add(attachment)
+    db.commit()
+    db.refresh(attachment)
+    return attachment
+
+
 def add_relation(
     db: Session,
     item: ResearchItem,
@@ -176,6 +201,10 @@ def add_relation(
     reasoning: str | None,
 ) -> ResearchRelation:
     target = get_research_or_404(db, target_id)
+    # Either endpoint can already participate in the approved graph. Creating a
+    # relation must obey the same review boundary as changing its research content.
+    ensure_research_editable(item)
+    ensure_research_editable(target)
     if target.id == item.id:
         raise HTTPException(422, "A research item cannot relate to itself")
     existing = db.scalar(

@@ -1,8 +1,10 @@
+import heapq
 import logging
 import re
 import threading
 import time
 from collections import defaultdict, deque
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from fastapi import Request
@@ -122,43 +124,87 @@ RATE_POLICIES: tuple[tuple[str, re.Pattern[str], RatePolicy], ...] = (
 
 
 class SlidingWindowLimiter:
-    def __init__(self) -> None:
+    def __init__(self, *, clock: Callable[[], float] | None = None) -> None:
         self._events: dict[tuple[str, str], deque[float]] = defaultdict(deque)
+        self._windows: dict[tuple[str, str], int] = {}
+        self._deadlines: dict[tuple[str, str], float] = {}
+        self._expiry: list[tuple[float, tuple[str, str]]] = []
+        self._clock = clock or time.monotonic
         self._lock = threading.Lock()
+
+    def _forget(self, key: tuple[str, str]) -> None:
+        self._events.pop(key, None)
+        self._windows.pop(key, None)
+        self._deadlines.pop(key, None)
+
+    def _cleanup(self, now: float) -> None:
+        # Only expire idle identities; evicting an active bucket would reset its limit.
+        while self._expiry and self._expiry[0][0] <= now:
+            deadline, key = heapq.heappop(self._expiry)
+            if self._deadlines.get(key) == deadline:
+                self._forget(key)
+
+    def _remember(self, key: tuple[str, str], window_seconds: int) -> None:
+        window = max(window_seconds, self._windows.get(key, 0))
+        self._windows[key] = window
+        deadline = self._events[key][-1] + window
+        if self._deadlines.get(key) != deadline:
+            self._deadlines[key] = deadline
+            heapq.heappush(self._expiry, (deadline, key))
 
     def consume(
         self, bucket: str, identity: str, limit: int, window_seconds: int
     ) -> tuple[bool, int, int]:
-        now = time.monotonic()
-        cutoff = now - window_seconds
         key = (bucket, identity)
         with self._lock:
+            now = self._clock()
+            self._cleanup(now)
+            cutoff = now - window_seconds
             events = self._events[key]
             while events and events[0] <= cutoff:
                 events.popleft()
             if len(events) >= limit:
+                self._remember(key, window_seconds)
                 retry_after = max(1, int(window_seconds - (now - events[0]) + 0.999))
                 return False, 0, retry_after
             events.append(now)
+            self._remember(key, window_seconds)
             return True, max(0, limit - len(events)), 0
 
     def recent(self, bucket: str, identity: str, window_seconds: int) -> int:
-        cutoff = time.monotonic() - window_seconds
         with self._lock:
-            events = self._events.get((bucket, identity))
+            now = self._clock()
+            self._cleanup(now)
+            key = (bucket, identity)
+            events = self._events.get(key)
             if not events:
                 return 0
+            cutoff = now - window_seconds
             while events and events[0] <= cutoff:
                 events.popleft()
+            if not events:
+                self._forget(key)
+                return 0
+            self._remember(key, window_seconds)
             return len(events)
 
-    def record(self, bucket: str, identity: str) -> None:
+    def record(self, bucket: str, identity: str, window_seconds: int | None = None) -> None:
         with self._lock:
-            self._events[(bucket, identity)].append(time.monotonic())
+            now = self._clock()
+            self._cleanup(now)
+            key = (bucket, identity)
+            self._events[key].append(now)
+            self._remember(
+                key, max(1, settings.rate_limit_window_seconds)
+                if window_seconds is None else window_seconds,
+            )
 
     def clear(self) -> None:
         with self._lock:
             self._events.clear()
+            self._windows.clear()
+            self._deadlines.clear()
+            self._expiry.clear()
 
 
 rate_limiter = SlidingWindowLimiter()

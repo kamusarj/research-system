@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import UploadFile
 from minio import Minio
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -382,6 +382,7 @@ async def delete_document(
             select(DocumentGraphEdge.id).where(DocumentGraphEdge.workspace_id == workspace.id)
         )
     )
+    _ensure_document_evidence_not_retained(db, workspace, node_ids + edge_ids)
     session_ids = list(
         db.scalars(
             select(ChatSession.id).where(
@@ -482,6 +483,74 @@ async def delete_document(
                     **exception_fields(exc),
                 },
             )
+
+
+def _ensure_document_evidence_not_retained(
+    db: Session, workspace: DocumentGraphWorkspace, local_graph_ids: list[str]
+) -> None:
+    evidence_ids = set(
+        db.scalars(
+            select(NodeEvidence.id).where(
+                or_(
+                    NodeEvidence.source_document_id == workspace.research_id,
+                    and_(
+                        NodeEvidence.owner_kind.in_({"document_node", "document_edge"}),
+                        NodeEvidence.owner_id.in_(local_graph_ids),
+                    ),
+                )
+            )
+        )
+    )
+    references = [
+        NodeEvidence.source_document_id == workspace.research_id,
+        NodeEvidence.provenance["workspace_id"].as_string() == workspace.id,
+    ]
+    if evidence_ids:
+        references.append(
+            NodeEvidence.provenance["source_evidence_id"].as_string().in_(evidence_ids)
+        )
+    if db.scalar(
+        select(NodeEvidence.id)
+        .where(
+            NodeEvidence.owner_kind.in_({"knowledge_node", "knowledge_edge"}),
+            or_(*references),
+        )
+        .limit(1)
+    ):
+        raise DocumentError(
+            "DOCUMENT_DELETE_PROVENANCE_LOCKED",
+            "This document retains canonical graph evidence and cannot be deleted",
+            409,
+        )
+
+    # Some accepted operations (for example ADD_ALIAS) retain evidence IDs in
+    # their applied mutation without making a canonical NodeEvidence copy.
+    if evidence_ids or local_graph_ids:
+        local_ids = set(local_graph_ids)
+        applied = db.scalars(
+            select(GraphMutation.proposed_json)
+            .join(GraphChangeSet, GraphChangeSet.id == GraphMutation.change_set_id)
+            .where(
+                GraphChangeSet.lifecycle_status == "applied",
+                GraphMutation.review_decision == "accepted",
+            )
+        )
+        for proposed in applied:
+            proposed = proposed if isinstance(proposed, dict) else {}
+            ids = proposed.get("evidence_ids")
+            uses_evidence = isinstance(ids, list) and any(
+                isinstance(value, str) and value in evidence_ids for value in ids
+            )
+            if uses_evidence or any(
+                proposed.get(key) in local_ids
+                for key in ("source_node_id", "source_edge_id")
+                if isinstance(proposed.get(key), str)
+            ):
+                raise DocumentError(
+                    "DOCUMENT_DELETE_PROVENANCE_LOCKED",
+                    "This document is retained by an applied graph change and cannot be deleted",
+                    409,
+                )
 
 
 async def serialize_document_content(

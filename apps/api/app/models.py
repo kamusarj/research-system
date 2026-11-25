@@ -882,6 +882,7 @@ class ResearchRun(Base):
         ),
         Index("ix_research_runs_queue", "status", "next_attempt_at"),
         Index("ix_research_runs_creator_day", "created_by", "created_at"),
+        Index("ix_research_runs_lease_token", "lease_token", unique=True),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -902,6 +903,7 @@ class ResearchRun(Base):
         ForeignKey("knowledge_gaps.id", ondelete="SET NULL")
     )
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    lease_token: Mapped[str | None] = mapped_column(String(36))
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
     error_code: Mapped[str | None] = mapped_column(String(80))

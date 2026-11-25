@@ -39,6 +39,9 @@ class GraphEdge(BaseModel):
     confidence: float = Field(default=1, ge=0, le=1)
     evidence_count: int = Field(default=0, ge=0)
     evidence: list[dict[str, object]] = Field(default_factory=list)
+    # An approved structural link outside the display tree stays visible without placing
+    # the target under a second parent.
+    hierarchy_secondary: bool = False
 
 
 class GraphMeta(BaseModel):

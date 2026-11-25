@@ -10,8 +10,19 @@ import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
+from app.services.research_agent.search import content_terms
+
 _TOKEN = re.compile(r"\S+")
 _DIGITS = re.compile(r"\d+(?:[.,]\d+)*")
+_ACRONYM = re.compile(r"\b[A-Z][A-Z0-9]{1,7}\b")
+_PROPER = re.compile(r"(?<=[a-z,;:\(\s])[A-Z][a-zA-Z0-9]{2,}\b")
+_NUMBER_TOKEN = re.compile(r"\d+(?:[.,]\d+)?%?")
+_BOILERPLATE = re.compile(
+    r"^(?:skip to|home\s*[>/|]|menu|search|subscribe|sign in|log in|cookie|privacy policy|"
+    r"terms of (?:service|use)|all rights reserved|copyright|share this|follow us|"
+    r"related (?:posts|articles)|table of contents|read more|learn more|contact us)",
+    re.IGNORECASE,
+)
 _PUNCT_MAP = str.maketrans(
     {
         "‘": "'",
@@ -115,6 +126,8 @@ NEGATIONS = frozenset(
     "không chưa chẳng chả đừng".split()
 )
 MIN_QUOTE_TOKENS = 6
+# Deterministic bound on fuzzy matcher work, independent of machine speed or worker concurrency.
+MAX_FUZZY_TOKEN_COMPARISONS = 250_000
 
 
 def raw_numbers(text: str) -> list[str]:
@@ -150,12 +163,23 @@ def match_quote(quote: str, text: str, *, min_fuzzy_tokens: int = 8) -> QuoteMat
     anchors = {tuple(quote_tokens[offset : offset + 3]) for offset in range(size - 2)}
     slack = max(2, size // 5)
     best: tuple[float, int, int] | None = None
+    comparisons = 0
+    seen_windows: set[tuple[int, int]] = set()
     for index in range(len(words) - 2):
         if tuple(words[index : index + 3]) not in anchors:
             continue
         for start in range(max(0, index - size), index + 1):
             for length in range(max(1, size - slack), size + slack + 1):
-                window = words[start : start + length]
+                end = min(len(words), start + length)
+                identity = (start, end)
+                if identity in seen_windows:
+                    continue
+                seen_windows.add(identity)
+                comparisons += size * (end - start)
+                if comparisons > MAX_FUZZY_TOKEN_COMPARISONS:
+                    # A partially explored best match is not a complete verification result.
+                    return None
+                window = words[start:end]
                 matcher = SequenceMatcher(None, quote_tokens, window, autojunk=False)
                 score = matcher.ratio()
                 if best is not None and score <= best[0]:
@@ -188,3 +212,154 @@ def _differences_are_harmless(
 def unsupported_numbers(claim: str, evidence: str) -> set[str]:
     """Số trong nhận định không có trong bằng chứng — dấu hiệu mô hình tự thêm dữ liệu."""
     return numbers_in(claim) - numbers_in(evidence)
+
+
+def _split_spans(
+    text: str, sep_pattern: str, start: int = 0, end: int | None = None
+) -> list[tuple[int, int]]:
+    end = len(text) if end is None else end
+    spans: list[tuple[int, int]] = []
+    pos = start
+    for match in re.finditer(sep_pattern, text[start:end]):
+        left, right = pos, start + match.start()
+        while left < right and text[left].isspace():
+            left += 1
+        while right > left and text[right - 1].isspace():
+            right -= 1
+        if left < right:
+            spans.append((left, right))
+        pos = start + match.end()
+    left, right = pos, end
+    while left < right and text[left].isspace():
+        left += 1
+    while right > left and text[right - 1].isspace():
+        right -= 1
+    if left < right:
+        spans.append((left, right))
+    return spans
+
+
+def _verbatim_spans(text: str, *, max_block: int = 1000) -> list[tuple[int, int]]:
+    """Split text into exact (start, end) spans without altering any characters."""
+    raw = _split_spans(text, r"\n\s*\n+")
+    if len(raw) <= 2:
+        raw = _split_spans(text, r"\n+")
+    spans: list[tuple[int, int]] = []
+    for start, end in raw:
+        if end - start <= max_block:
+            spans.append((start, end))
+            continue
+        for line_start, line_end in _split_spans(text, r"\n+", start, end):
+            if line_end - line_start <= max_block:
+                spans.append((line_start, line_end))
+                continue
+            cuts = [m.end() for m in re.finditer(r"(?<=[.!?])\s+", text[line_start:line_end])]
+            chunk_start = line_start
+            last_good = line_start
+            for cut in cuts:
+                abs_pos = line_start + cut
+                if abs_pos - chunk_start > max_block and last_good > chunk_start:
+                    chunk_end = last_good
+                    while chunk_end > chunk_start and text[chunk_end - 1].isspace():
+                        chunk_end -= 1
+                    if chunk_end > chunk_start:
+                        spans.append((chunk_start, chunk_end))
+                    chunk_start = last_good
+                    while chunk_start < line_end and text[chunk_start].isspace():
+                        chunk_start += 1
+                last_good = abs_pos
+            if chunk_start < line_end:
+                while line_end - chunk_start > max_block:
+                    cut_at = text.rfind(" ", chunk_start, chunk_start + max_block)
+                    if cut_at <= chunk_start:
+                        cut_at = chunk_start + max_block
+                    spans.append((chunk_start, cut_at))
+                    chunk_start = cut_at
+                    while chunk_start < line_end and text[chunk_start].isspace():
+                        chunk_start += 1
+                if chunk_start < line_end:
+                    spans.append((chunk_start, line_end))
+    return spans
+
+
+def select_relevant_passages(
+    text: str,
+    *,
+    query_terms: set[str],
+    perspective_terms: set[str],
+    max_chars: int = 5000,
+) -> str:
+    """Select high-signal verbatim spans from source text within max_chars.
+
+    Every chunk separated by blank lines is an exact slice of `text`, preserving verbatim
+    quote matching and offsets against the full stored source.
+    """
+    if not text or max_chars <= 0 or len(text) <= max_chars:
+        return text
+    spans = _verbatim_spans(text)
+    if not spans:
+        return text[:max_chars]
+
+    seen_norm: set[str] = set()
+    scored: list[tuple[float, int, int, int]] = []
+    for idx, (start, end) in enumerate(spans):
+        block = text[start:end]
+        norm = " ".join(block.casefold().split())
+        if norm in seen_norm:
+            continue
+        seen_norm.add(norm)
+        if len(block) < 35 and _BOILERPLATE.match(block):
+            continue
+        block_terms = content_terms(block)
+        q_overlap = len(block_terms & query_terms)
+        p_overlap = len(block_terms & perspective_terms)
+        nums = min(4, len(_NUMBER_TOKEN.findall(block)))
+        acronyms = min(4, len(set(_ACRONYM.findall(block))))
+        propers = min(5, len(set(_PROPER.findall(block))))
+        words = max(1, len(block.split()))
+        if len(block) < 45:
+            score = (q_overlap * 1.5 + p_overlap) * 0.4
+        else:
+            density = (q_overlap * 2.0 + p_overlap * 1.2) / (words / 40.0 + 1.0)
+            info = nums * 1.1 + acronyms * 1.0 + propers * 0.6
+            lead = 2.0 if idx < 2 and len(block) >= 80 else 0.0
+            boilerplate_penalty = -3.0 if _BOILERPLATE.match(block) else 0.0
+            score = q_overlap * 2.5 + p_overlap * 1.5 + density + info + lead + boilerplate_penalty
+        scored.append((score, idx, start, end))
+
+    picked: list[tuple[int, int, int]] = []
+    used = 0
+    for _, idx, start, end in sorted(scored, key=lambda item: (-item[0], item[1])):
+        sep = 2 if picked else 0
+        length = end - start
+        if used + sep + length > max_chars:
+            if not picked:
+                cut_at = text.rfind(" ", start, start + max_chars)
+                limit_end = cut_at if cut_at > start else min(end, start + max_chars)
+                picked.append((idx, start, limit_end))
+                used += limit_end - start
+            continue
+        picked.append((idx, start, end))
+        used += sep + length
+        if used >= max_chars - 80:
+            break
+
+    if not picked:
+        return text[:max_chars]
+
+    picked.sort(key=lambda item: item[0])
+    merged: list[tuple[int, int]] = []
+    slack = max(0, max_chars - used)
+    prev_idx = -2
+    for idx, start, end in picked:
+        if merged and idx == prev_idx + 1:
+            gap = start - merged[-1][1]
+            extra = max(0, gap - 2)
+            if 0 <= gap <= 4 and extra <= slack:
+                merged[-1] = (merged[-1][0], end)
+                slack -= extra
+                prev_idx = idx
+                continue
+        merged.append((start, end))
+        prev_idx = idx
+    return "\n\n".join(text[start:end] for start, end in merged)

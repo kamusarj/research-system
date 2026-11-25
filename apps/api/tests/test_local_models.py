@@ -1,10 +1,23 @@
+import asyncio
+import contextvars
 import json
+import socketserver
+import ssl
+import threading
+import time
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 from pydantic import BaseModel, ConfigDict, SecretStr
 
 from app.core.config import settings
+from app.services import ai
+from app.services.ai_usage import collect_usage
 from app.services.object_storage import DocumentError
 from app.services.providers import local_models
 from app.services.providers.local_models import (
@@ -34,7 +47,7 @@ def configured_models(monkeypatch):
 
 
 def mock_server(monkeypatch, handler):
-    real_client = httpx.Client
+    real_client = httpx.AsyncClient
     requests = []
     clients = []
 
@@ -46,7 +59,7 @@ def mock_server(monkeypatch, handler):
         clients.append(kwargs)
         return real_client(transport=httpx.MockTransport(observed), **kwargs)
 
-    monkeypatch.setattr(local_models.httpx, "Client", factory)
+    monkeypatch.setattr(local_models.httpx, "AsyncClient", factory)
     return requests, clients
 
 
@@ -431,8 +444,8 @@ def test_oversized_declared_body_is_rejected_before_parsing(monkeypatch, provide
 
 @pytest.mark.parametrize("provider", sorted(LOCAL_PROVIDERS))
 def test_streaming_body_is_bounded_without_content_length(monkeypatch, provider):
-    class LargeStream(httpx.SyncByteStream):
-        def __iter__(self):
+    class LargeStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
             yield b"{" + b"x" * 1024
             pytest.fail("Reader must stop when the byte limit is exceeded")
 
@@ -491,3 +504,286 @@ def test_unknown_provider_and_invalid_model_never_contact_server(monkeypatch):
     with pytest.raises(DocumentError):
         LocalGraphChatProvider("ollama", model="model\nheader")
     assert requests == []
+
+
+def escaped(value):
+    return "".join(f"\\u{ord(char):04x}" for char in value)
+
+
+@pytest.mark.parametrize("provider", sorted(LOCAL_PROVIDERS))
+@pytest.mark.parametrize("field", ["answer", "property"])
+def test_decoded_structured_values_and_property_names_cannot_echo_server_key(
+    monkeypatch, provider, field, caplog
+):
+    secret = "arbitrary-local-token"
+    monkeypatch.setattr(settings, f"{provider}_api_key", SecretStr(secret))
+    content = (
+        '{"answer":"' + escaped(secret) + '","count":1}'
+        if field == "answer"
+        else '{"answer":"ok","count":1,"' + escaped(secret) + '":"value"}'
+    )
+    mock_server(
+        monkeypatch,
+        lambda _: httpx.Response(200, json=completion(provider, content)),
+    )
+    with pytest.raises(DocumentError) as error:
+        complete_local_json(provider, "Synthetic", StructuredAnswer, 64)
+    assert error.value.code == "CHAT_PROVIDER_FAILED"
+    assert secret not in str(error.value) + caplog.text
+
+
+@pytest.mark.parametrize("provider", sorted(LOCAL_PROVIDERS))
+@pytest.mark.parametrize("location", ["reply", "argument-value", "argument-property"])
+def test_each_nested_json_layer_is_checked_before_chat_text_or_tools_escape(
+    monkeypatch, provider, location, caplog
+):
+    secret = "arbitrary-local-token"
+    monkeypatch.setattr(settings, f"{provider}_api_key", SecretStr(secret))
+    if location == "reply":
+        content = '{"reply":"' + escaped(secret) + '","tool_calls":[]}'
+    else:
+        arguments = (
+            '{"query":"' + escaped(secret) + '"}'
+            if location == "argument-value"
+            else '{"' + escaped(secret) + '":"value"}'
+        )
+        content = json.dumps(
+            {"reply": "ok", "tool_calls": [{"name": "search_nodes", "arguments_json": arguments}]}
+        )
+    mock_server(
+        monkeypatch, lambda _: httpx.Response(200, json=completion(provider, content))
+    )
+    with pytest.raises(DocumentError) as error:
+        LocalGraphChatProvider(provider).respond(
+            input_items=[], tools=TOOLS, instructions="Synthetic", metadata={}
+        )
+    assert error.value.code == "CHAT_PROVIDER_FAILED"
+    assert secret not in str(error.value) + caplog.text
+
+
+@pytest.mark.parametrize("provider", sorted(LOCAL_PROVIDERS))
+def test_unicode_escaped_inventory_cannot_return_server_key_as_model_id(monkeypatch, provider):
+    secret = "arbitrary-local-token"
+    monkeypatch.setattr(settings, f"{provider}_api_key", SecretStr(secret))
+    collection, field = ("models", "name") if provider == "ollama" else ("data", "id")
+    body = '{"' + collection + '":[{"' + field + '":"' + escaped(secret) + '"}]}'
+    mock_server(monkeypatch, lambda _: httpx.Response(200, content=body.encode()))
+    with pytest.raises(DocumentError) as error:
+        list_local_models(provider)
+    assert error.value.code == "CHAT_PROVIDER_FAILED"
+    assert secret not in str(error.value)
+
+
+def test_sync_adapter_can_run_inside_event_loop_without_losing_usage_context(monkeypatch):
+    context = contextvars.ContextVar("local-model-test-context")
+    context.set("synthetic-attempt")
+    seen = []
+
+    def handler(_):
+        seen.append(context.get())
+        return httpx.Response(200, json={"models": [{"name": "installed"}]})
+
+    mock_server(monkeypatch, handler)
+
+    async def caller():
+        return list_local_models("ollama")
+
+    assert asyncio.run(caller()) == ["installed"]
+    assert seen == ["synthetic-attempt"]
+
+
+@pytest.mark.parametrize("stage", ["headers", "body"])
+def test_total_deadline_cancels_real_slow_drip_http_response(monkeypatch, stage):
+    disconnected = threading.Event()
+
+    class SlowServer(socketserver.ThreadingTCPServer):
+        daemon_threads = True
+        allow_reuse_address = True
+
+    class SlowHandler(socketserver.BaseRequestHandler):
+        def handle(self):
+            self.request.settimeout(1)
+            request = b""
+            while b"\r\n\r\n" not in request:
+                request += self.request.recv(4096)
+            try:
+                self.request.sendall(b"HTTP/1.1 200 OK\r\n")
+                if stage == "body":
+                    self.request.sendall(b"Content-Length: 32\r\n\r\n{")
+                for index in range(10):
+                    time.sleep(0.06)
+                    chunk = f"X-Delay-{index}: 1\r\n".encode() if stage == "headers" else b" "
+                    self.request.sendall(chunk)
+            except OSError:
+                disconnected.set()
+
+    with SlowServer(("127.0.0.1", 0), SlowHandler) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        monkeypatch.setattr(settings, "ollama_base_url", f"http://127.0.0.1:{server.server_address[1]}")
+        start = time.monotonic()
+        try:
+            with pytest.raises(DocumentError) as error:
+                list_local_models("ollama", timeout=0.2)
+            elapsed = time.monotonic() - start
+            assert error.value.code == "CHAT_PROVIDER_TIMEOUT"
+            assert error.value.status_code == 504
+            assert elapsed < 0.4  # Header trickling used to extend this beyond 0.7s.
+            assert disconnected.wait(0.4), "Timed-out connection must be closed"
+        finally:
+            server.shutdown()
+            thread.join(timeout=1)
+
+
+def test_dns_stall_obeys_total_deadline_without_unbounded_resolvers_or_late_http(monkeypatch):
+    original_lookup = socketserver.socket.getaddrinfo
+    release_dns = threading.Event()
+    resolver_calls = []
+    completed_lookups = []
+    http_calls = []
+
+    def stalled_dns(*args, **kwargs):
+        resolver_calls.append(args[0])
+        completed = threading.Event()
+        completed_lookups.append(completed)
+        try:
+            release_dns.wait(2)
+            return original_lookup("127.0.0.1", args[1], *args[2:], **kwargs)
+        finally:
+            completed.set()
+
+    class Server(socketserver.ThreadingTCPServer):
+        daemon_threads = True
+
+    class Handler(socketserver.BaseRequestHandler):
+        def handle(self):
+            http_calls.append(True)
+
+    with Server(("127.0.0.1", 0), Handler) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        monkeypatch.setattr(
+            settings, "ollama_base_url", f"http://slow-dns.fixture.invalid:{server.server_address[1]}"
+        )
+        monkeypatch.setattr(local_models.socket, "getaddrinfo", stalled_dns)
+        try:
+            for _ in range(local_models._DNS_WORKERS + 1):
+                started = time.monotonic()
+                with pytest.raises(DocumentError) as error:
+                    list_local_models("ollama", timeout=0.08)
+                assert error.value.code == "CHAT_PROVIDER_TIMEOUT"
+                assert time.monotonic() - started < 0.3
+            assert len(resolver_calls) == local_models._DNS_WORKERS
+        finally:
+            release_dns.set()
+            for completed in completed_lookups:
+                assert completed.wait(1)
+            server.shutdown()
+            thread.join(timeout=1)
+        assert http_calls == []  # DNS completing after cancellation must never start inference.
+
+
+def test_bounded_dns_preserves_original_host_sni_and_certificate_verification(
+    monkeypatch, tmp_path
+):
+    host = "local-model.fixture.invalid"
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, host)])
+    now = datetime.now(UTC)
+    certificate = (
+        x509.CertificateBuilder().subject_name(name).issuer_name(name)
+        .public_key(key.public_key()).serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1)).not_valid_after(now + timedelta(days=1))
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName(host)]), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+    certificate_path, key_path = tmp_path / "certificate.pem", tmp_path / "key.pem"
+    certificate_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ))
+    server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_context.load_cert_chain(certificate_path, key_path)
+    sni, requests = [], []
+    server_context.set_servername_callback(lambda _socket, name, _context: sni.append(name))
+
+    class Server(socketserver.ThreadingTCPServer):
+        daemon_threads = True
+
+    class Handler(socketserver.BaseRequestHandler):
+        def handle(self):
+            with server_context.wrap_socket(self.request, server_side=True) as connection:
+                connection.settimeout(1)
+                request = b""
+                while b"\r\n\r\n" not in request:
+                    request += connection.recv(4096)
+                requests.append(request.decode())
+                body = b'{"models":[{"name":"installed"}]}'
+                connection.sendall(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: " + str(len(body)).encode()
+                    + b"\r\nConnection: close\r\n\r\n" + body
+                )
+
+    real_client = httpx.AsyncClient
+    client_context = ssl.create_default_context(cafile=certificate_path)
+    monkeypatch.setattr(local_models.httpx, "AsyncClient", lambda **kw: real_client(
+        verify=client_context, **kw
+    ))
+    lookup = local_models.socket.getaddrinfo
+    monkeypatch.setattr(local_models.socket, "getaddrinfo", lambda _host, port, **kw: lookup(
+        "127.0.0.1", port, **kw
+    ))
+    with Server(("127.0.0.1", 0), Handler) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        port = server.server_address[1]
+        monkeypatch.setattr(settings, "ollama_base_url", f"https://{host}:{port}")
+        try:
+            assert list_local_models("ollama", timeout=1) == ["installed"]
+        finally:
+            server.shutdown()
+            thread.join(timeout=1)
+    assert client_context.check_hostname is True
+    assert client_context.verify_mode == ssl.CERT_REQUIRED
+    assert sni == [host]
+    assert f"Host: {host}:{port}\r\n" in requests[0]
+
+
+@pytest.mark.parametrize("provider", sorted(LOCAL_PROVIDERS))
+@pytest.mark.parametrize("content", ['{"answer":"ok","count":1}', "bad-json"])
+def test_structured_usage_is_reported_exactly_once_even_when_decoding_fails(
+    monkeypatch, provider, content
+):
+    mock_server(
+        monkeypatch, lambda _: httpx.Response(200, json=completion(provider, content))
+    )
+    runtime = ai.OllamaProvider() if provider == "ollama" else ai.LocalOpenAIProvider()
+    with collect_usage() as usage:
+        if content == "bad-json":
+            with pytest.raises(httpx.HTTPStatusError):
+                runtime.complete_json("Synthetic prompt", StructuredAnswer)
+        else:
+            assert runtime.complete_json("Synthetic prompt", StructuredAnswer).answer == "ok"
+    assert usage["input_tokens"] == 7
+    assert usage["output_tokens"] == 3
+    assert usage["total_tokens"] == 10
+    assert usage["prompt_chars"] == len("Synthetic prompt")
+
+
+@pytest.mark.parametrize("provider", sorted(LOCAL_PROVIDERS))
+def test_graph_usage_is_returned_for_the_chat_caller_without_duplicate_observation(
+    monkeypatch, provider
+):
+    mock_server(
+        monkeypatch,
+        lambda _: httpx.Response(
+            200, json=completion(provider, '{"reply":"ok","tool_calls":[]}')
+        ),
+    )
+    with collect_usage() as usage:
+        response = LocalGraphChatProvider(provider).respond(
+            input_items=[], tools=[], instructions="Synthetic", metadata={}
+        )
+    assert response.usage["total_tokens"] == 10
+    assert usage == {}

@@ -13,6 +13,7 @@ from app.models import (
     ResearchRunClaim,
     ResearchRunSource,
 )
+from app.services.providers.cli_bridge import BridgeProtocolError
 from app.services.research_agent import runner
 from app.services.research_agent.evidence import match_quote, unsupported_numbers
 from app.services.research_agent.schemas import PERSPECTIVES, ReportDraft
@@ -189,10 +190,17 @@ def run_to_completion(db, run, *, llm=None, search=None, fetch=None, max_steps=2
         db.refresh(run)
         if run.status in {"completed", "failed", "cancelled"}:
             break
-        run.status = "running"
+        _claim_now(db, run)
         runner.advance_research_run(db, run, llm=llm, providers=[search], fetch=fetch)
     db.refresh(run)
     return run, llm, search, fetch
+
+
+def _claim_now(db, run):
+    # Deterministic retry fixture: make the scheduled attempt ready instead of sleeping.
+    run.next_attempt_at = runner.utcnow()
+    db.commit()
+    return runner.claim_run(db, run)
 
 
 # --- Kiểm chứng trích dẫn -----------------------------------------------------------------------
@@ -261,13 +269,77 @@ def test_writer_drops_uncited_fabricated_and_link_injected_content():
     )
     report = validate_draft(draft, claims)
     texts = [sentence.text for sentence in report.sections["market"]]
-    assert texts == ["62% doanh nghiệp lớn đã chạy agent .", "Doanh nghiệp lớn chạy agent"]
+    assert texts == ["62% doanh nghiệp lớn chạy agent"]
     assert all("evil" not in text and "<b>" not in text for text in texts)
     assert report.violations == {
         "no_verified_claim": 2,
-        "unsupported_number": 1,
-        "weak_support": 1,
+        "rewritten_to_verified_claim": 1,
     }
+
+
+@pytest.mark.parametrize(
+    "proposed",
+    [
+        "Acme không bắt buộc người duyệt trước khi agent chuyển tiền cho khách hàng.",
+        "Beta bắt buộc người duyệt trước khi agent chuyển tiền cho khách hàng.",
+        "Acme bắt buộc người duyệt trước khi agent chuyển tiền cho khách hàng. "
+        "Acme bảo đảm không bao giờ mất tiền.",
+    ],
+)
+def test_writer_cannot_change_meaning_or_append_facts_to_a_verified_claim(proposed):
+    original = "Acme bắt buộc người duyệt trước khi agent chuyển tiền cho khách hàng."
+    claims = {"C1": VerifiedClaim("C1", "s1", "risk_compliance", original, original)}
+    draft = ReportDraft.model_validate(
+        {
+            "title": "An unverified assertion in a title",
+            "sections": [
+                {
+                    "perspective": "risk_compliance",
+                    "sentences": [
+                        {"text": proposed, "claim_ids": ["C1"]},
+                    ],
+                }
+            ],
+        }
+    )
+    report = validate_draft(draft, claims)
+    [sentence] = report.sections["risk_compliance"]
+    assert sentence.text == original
+    assert sentence.claim_ids == ["C1"]
+    assert proposed not in sentence.text
+    assert report.violations == {"rewritten_to_verified_claim": 1}
+    assert report.title == "Báo cáo nghiên cứu"
+
+
+def test_writer_renders_each_selected_claim_separately_without_inventing_perspective_coverage():
+    claims = {
+        "C1": VerifiedClaim("C1", "s1", "market", "Acme has ten users.", "ten users"),
+        "C2": VerifiedClaim("C2", "s2", "technical", "Beta uses SQL.", "uses SQL"),
+    }
+    draft = ReportDraft.model_validate(
+        {
+            "title": "T",
+            "sections": [
+                {
+                    "perspective": "summary",
+                    "sentences": [
+                        {"text": "Acme uses SQL.", "claim_ids": ["C1", "C2"]},
+                    ],
+                },
+                {
+                    "perspective": "risk_compliance",
+                    "sentences": [
+                        {"text": "Acme has ten users.", "claim_ids": ["C1"]},
+                    ],
+                },
+            ],
+        }
+    )
+    report = validate_draft(draft, claims)
+    assert [s.text for s in report.sections["summary"]] == [c.text for c in claims.values()]
+    assert all(len(s.claim_ids) == 1 for s in report.sections["summary"])
+    assert "risk_compliance" not in report.sections
+    assert report.accepted_draft_sentences == 1
 
 
 def test_citation_coverage_ignores_meta_sections():
@@ -363,6 +435,36 @@ def test_full_run_produces_fully_cited_draft_report(db, agent_enabled):
     assert any(s.status == "duplicate" for s in sources)
 
 
+def test_run_adds_a_verified_omitted_section_and_leaves_unsupported_gap(db, agent_enabled):
+    class OmitPerspectives(FakeLLM):
+        def complete_json(self, prompt, schema):
+            response = super().complete_json(prompt, schema)
+            if schema.__name__ == "ClaimExtraction":
+                response.claims = [c for c in response.claims if c.perspective != "competitors"]
+            if schema.__name__ == "ReportDraft":
+                response.sections = [s for s in response.sections if s.perspective != "technical"]
+            return response
+
+    run = runner.create_run(db, "Doanh nghiệp triển khai AI agent thế nào?")
+    run, _, _, _ = run_to_completion(db, run, llm=OmitPerspectives())
+
+    assert run.status == "completed", run.error_message
+    assert run.metrics_json["writer_fallback_perspectives"] == ["technical"]
+    assert "technical" in run.metrics_json["perspectives_covered"]
+    assert "competitors" not in run.metrics_json["perspectives_covered"]
+    assert run.metrics_json["uncited_sentences"] == 0
+    report = db.get(ResearchItem, run.report_research_id)
+    assert "## Kỹ thuật" in report.content
+    assert "## Đối thủ" not in report.content
+    assert "Đối thủ: chưa tìm thấy nhận định nào đủ bằng chứng" in report.content
+    claim = (
+        db.query(ResearchRunClaim)
+        .filter_by(run_id=run.id, perspective="technical", used_in_report=True)
+        .one()
+    )
+    assert claim.status == "verified"
+
+
 def test_optimized_rerun_hits_web_and_llm_caches(db, agent_enabled):
     first, llm1, _, fetch1 = run_to_completion(
         db, runner.create_run(db, "AI agents cho bán lẻ thì sao?")
@@ -407,6 +509,56 @@ def test_provider_usage_is_attributed_to_the_run(db, agent_enabled, monkeypatch)
     assert run.metrics_json["input_tokens"] == 100 * len(llm.calls)
     assert {row["operation"] for row in rows} >= {"research-agent.plan", "research-agent.write"}
     assert AICallMetric  # bảng toàn cục được ghi qua recorder thật ở runtime
+
+
+def test_failed_response_usage_and_prompt_chars_are_attributed_to_the_run(db, agent_enabled):
+    from app.services import ai_usage
+
+    class BrokenMeteredLLM(FakeLLM):
+        def complete_json(self, prompt, schema):
+            self.calls.append(schema.__name__)
+            ai_usage.report_usage(input_tokens=100, output_tokens=20)
+            raise ValueError("invalid structured response")
+
+    rows = []
+    previous = ai_usage.set_recorder(rows.append)
+    try:
+        run, llm, _, _ = run_to_completion(
+            db,
+            runner.create_run(db, "AI agents cho kiểm toán?"),
+            llm=BrokenMeteredLLM(),
+        )
+    finally:
+        ai_usage.set_recorder(previous)
+    metrics = run.metrics_json
+    assert metrics["llm_calls"] == len(llm.calls) > 0
+    assert metrics["input_tokens"] == 100 * len(llm.calls)
+    assert metrics["output_tokens"] == 20 * len(llm.calls)
+    assert metrics["total_tokens"] == 120 * len(llm.calls)
+    assert metrics["prompt_chars"] > 0
+    assert metrics["usage_complete_calls"] == len(llm.calls)
+    assert {row["outcome"] for row in rows} == {"error"}
+
+
+def test_quality_matched_reference_retains_entailment(db, agent_enabled):
+    run, llm, _, _ = run_to_completion(
+        db,
+        runner.create_run(db, "AI agents cho ngân hàng?", variant="reference"),
+    )
+    assert run.status == "completed"
+    assert "EntailmentBatch" in llm.calls
+    assert not any(
+        runner.VARIANTS["reference"][key]
+        for key in (
+            "web_cache",
+            "llm_cache",
+            "dedup",
+            "parallel",
+            "passage_filter",
+        )
+    )
+    assert runner.VARIANTS["naive"]["passage_filter"] is False
+    assert runner.VARIANTS["optimized"]["passage_filter"] is True
 
 
 def test_cancel_and_failure_paths(db, agent_enabled):
@@ -623,12 +775,13 @@ def test_failed_attempts_still_count_against_the_call_budget(db, agent_enabled):
         db.refresh(run)
         if run.status in {"completed", "failed"}:
             break
-        runner.claim_run(db, run)
+        _claim_now(db, run)
         runner.advance_research_run(
             db, run, llm=llm, providers=[FakeSearch()], fetch=fake_fetch_factory()
         )
     db.refresh(run)
     assert run.status == "failed"
+    assert run.error_code == "AI_RESPONSE_INVALID"
     assert run.metrics_json["llm_calls"] == len(llm.calls)
 
     other = runner.create_run(db, "Lượt khác đang chạy cùng người tạo?")
@@ -636,6 +789,99 @@ def test_failed_attempts_still_count_against_the_call_budget(db, agent_enabled):
         runner.retry_run(db, run)
     assert getattr(active.value, "code", "") == "RESEARCH_RUN_ACTIVE"
     assert other.status == "queued"
+
+
+def _drive_until_terminal(db, run, llm, max_steps=12):
+    for _ in range(max_steps):
+        db.refresh(run)
+        if run.status in {"completed", "failed"}:
+            break
+        _claim_now(db, run)
+        runner.advance_research_run(
+            db, run, llm=llm, providers=[FakeSearch()], fetch=fake_fetch_factory()
+        )
+    db.refresh(run)
+    return run
+
+
+def test_extract_transport_faults_are_not_blamed_on_model_output(db, agent_enabled):
+    class OfflineExtractor(FakeLLM):
+        def complete_json(self, prompt, schema):
+            if schema.__name__ == "ClaimExtraction":
+                self.calls.append(schema.__name__)
+                raise httpx.ConnectError("bridge unreachable")
+            return super().complete_json(prompt, schema)
+
+    llm = OfflineExtractor()
+    run = runner.create_run(db, "AI agents cho logistics đường dài?")
+    run = _drive_until_terminal(db, run, llm)
+    assert run.status == "failed"
+    assert run.error_code == "AI_PROVIDER_UNAVAILABLE"
+
+
+def test_extract_rate_limit_is_reported_as_rate_limit(db, agent_enabled):
+    class LimitedExtractor(FakeLLM):
+        def complete_json(self, prompt, schema):
+            if schema.__name__ == "ClaimExtraction":
+                self.calls.append(schema.__name__)
+                request = httpx.Request("POST", "http://bridge/v1/complete")
+                raise httpx.HTTPStatusError(
+                    "429 Too Many Requests",
+                    request=request,
+                    response=httpx.Response(429, request=request),
+                )
+            return super().complete_json(prompt, schema)
+
+    llm = LimitedExtractor()
+    run = runner.create_run(db, "AI agents cho thương mại điện tử?")
+    run = _drive_until_terminal(db, run, llm)
+    assert run.status == "failed"
+    assert run.error_code == "AI_PROVIDER_RATE_LIMITED"
+
+
+def test_extract_bridge_protocol_faults_report_provider_error(db, agent_enabled):
+    class GarbageBridgeExtractor(FakeLLM):
+        def complete_json(self, prompt, schema):
+            if schema.__name__ == "ClaimExtraction":
+                self.calls.append(schema.__name__)
+                raise BridgeProtocolError("AI CLI bridge returned an invalid response")
+            return super().complete_json(prompt, schema)
+
+    llm = GarbageBridgeExtractor()
+    run = runner.create_run(db, "AI agents cho kiểm toán nội bộ?")
+    run = _drive_until_terminal(db, run, llm)
+    assert run.status == "failed"
+    assert run.error_code == "AI_PROVIDER_ERROR"
+
+
+def test_extract_parse_failures_stay_ai_response_invalid(db, agent_enabled):
+    class BrokenExtractor(FakeLLM):
+        def complete_json(self, prompt, schema):
+            if schema.__name__ == "ClaimExtraction":
+                self.calls.append(schema.__name__)
+                raise ValueError("invalid JSON")
+            return super().complete_json(prompt, schema)
+
+    llm = BrokenExtractor()
+    run = runner.create_run(db, "AI agents cho bán lẻ thì sao?")
+    run = _drive_until_terminal(db, run, llm)
+    assert run.status == "failed"
+    assert run.error_code == "AI_RESPONSE_INVALID"
+
+
+def test_write_bridge_protocol_fault_reports_provider_error(db, agent_enabled):
+    class GarbageBridgeWriter(FakeLLM):
+        def complete_json(self, prompt, schema):
+            if schema.__name__ == "ReportDraft":
+                self.calls.append(schema.__name__)
+                raise BridgeProtocolError("AI CLI bridge returned a non-JSON response")
+            return super().complete_json(prompt, schema)
+
+    llm = GarbageBridgeWriter()
+    run = runner.create_run(db, "AI agents cho tuyển dụng nhân sự?")
+    run = _drive_until_terminal(db, run, llm)
+    assert run.status == "failed"
+    assert run.error_code == "AI_PROVIDER_ERROR"
 
 
 def test_users_cannot_request_the_weaker_naive_variant(client, agent_enabled):
@@ -779,3 +1025,178 @@ def test_conflicting_verdict_cache_requires_fresh_judgements(db, agent_enabled):
     )
     assert "EntailmentBatch" in llm.calls
     assert second.status == "failed" and second.error_code == "NO_VERIFIED_CLAIMS"
+
+
+def test_select_relevant_passages_preserves_verbatim_slices_and_high_signal_facts():
+    from app.services.research_agent.evidence import select_relevant_passages
+    from app.services.research_agent.search import content_terms
+
+    short = "Short source under the character budget stays completely intact."
+    assert (
+        select_relevant_passages(
+            short, query_terms={"short"}, perspective_terms=set(), max_chars=500
+        )
+        == short
+    )
+
+    boilerplate = "\n\n".join(
+        [
+            "Skip to main content",
+            "Subscribe to our newsletter for weekly updates.",
+            *[
+                f"Unrelated filler paragraph {i}: cooking recipes and travel diaries." * 12
+                for i in range(12)
+            ],
+        ]
+    )
+    fact_a = (
+        "Gartner forecasts enterprise agentic AI market spending will reach 45 billion USD "
+        "by 2026 with 38% adoption across large organizations."
+    )
+    fact_b = (
+        "OWASP guidance recommends strict prompt injection defenses and audit logging for "
+        "customer-facing autonomous agents."
+    )
+    source_text = f"{boilerplate}\n\n{fact_a}\n\n{fact_b}\n\n" + ("Trailing sidebar links. " * 120)
+
+    selected = select_relevant_passages(
+        source_text,
+        query_terms=content_terms("enterprise agentic AI market Gartner OWASP prompt injection"),
+        perspective_terms=content_terms("market size adoption security governance"),
+        max_chars=1200,
+    )
+
+    assert len(selected) <= 1200
+    assert fact_a in selected
+    assert fact_b in selected
+    # Adjacent selected spans merge cleanly and every chunk stays an exact verbatim substring.
+    assert f"{fact_a}\n\n{fact_b}" in selected
+    for chunk in selected.split("\n\n"):
+        assert chunk in source_text
+        assert match_quote(chunk, source_text) is not None or len(chunk.split()) < 6
+
+
+def test_select_relevant_passages_splits_wall_of_text_within_budget():
+    from app.services.research_agent.evidence import select_relevant_passages
+
+    wall = " ".join(
+        f"Sentence number {i} discusses enterprise AI adoption and governance." for i in range(200)
+    )
+    selected = select_relevant_passages(
+        wall,
+        query_terms={"enterprise", "adoption", "governance"},
+        perspective_terms={"adoption"},
+        max_chars=1500,
+    )
+    assert 0 < len(selected) <= 1500
+    for chunk in selected.split("\n\n"):
+        assert chunk in wall
+
+
+def test_passage_filter_shrinks_optimized_extract_prompts_while_reference_stays_full(
+    db, agent_enabled
+):
+    from app.services.research_agent.schemas import ClaimExtraction
+
+    filler = "\n\n".join(
+        f"Unrelated boilerplate section {i} discussing weather forecasts and gardening tips. " * 6
+        for i in range(10)
+    )
+
+    class RecordingLLM(FakeLLM):
+        def __init__(self):
+            super().__init__()
+            self.extract_prompts: list[str] = []
+
+        def complete_json(self, prompt, schema):
+            if schema is ClaimExtraction:
+                self.extract_prompts.append(prompt)
+            return super().complete_json(prompt, schema)
+
+    def fetch_long(url: str) -> runner.FetchedPage:
+        # Put PAGE past char 5000 so naive prefix truncation would miss it, while passage_filter
+        # selects it verbatim alongside query-relevant text and drops unrelated boilerplate.
+        text = f"{filler}\n\n{page_text(url)}\n\n{filler}"
+        assert len(text) > runner.EXTRACT_PASSAGE_MAX_CHARS + 2000
+        return runner.FetchedPage(url=url, title=f"Title for {url}", text=text)
+
+    ref_llm = RecordingLLM()
+    ref_run, _, _, _ = run_to_completion(
+        db,
+        runner.create_run(
+            db, "Enterprise AI agent adoption 2026?", variant="reference", enforce_limits=False
+        ),
+        llm=ref_llm,
+        fetch=fetch_long,
+    )
+    opt_llm = RecordingLLM()
+    opt_run, _, _, _ = run_to_completion(
+        db,
+        runner.create_run(
+            db, "Enterprise AI agent adoption 2026?", variant="optimized", enforce_limits=False
+        ),
+        llm=opt_llm,
+        fetch=fetch_long,
+    )
+
+    assert ref_run.status == "completed"
+    assert opt_run.status == "completed"
+    assert ref_run.metrics_json["extract_input_chars"] == ref_run.metrics_json["extract_raw_chars"]
+    assert opt_run.metrics_json["extract_input_chars"] < opt_run.metrics_json["extract_raw_chars"]
+    assert sum(len(p) for p in opt_llm.extract_prompts) < sum(
+        len(p) for p in ref_llm.extract_prompts
+    )
+    assert len(opt_llm.extract_prompts) <= len(ref_llm.extract_prompts)
+    assert all(PAGE.strip() in prompt for prompt in opt_llm.extract_prompts)
+    # Full source remains stored intact so verbatim quote verification works on original offsets.
+    assert opt_run.metrics_json["claims_verified"] > 0
+    assert opt_run.metrics_json["uncited_sentences"] == 0
+
+
+def test_stage_searching_assigns_top_hits_rank_first_across_perspectives(db, agent_enabled):
+    """Ensure query 1 (market) cannot claim another perspective's rank-1 URL at a lower rank."""
+
+    class OverlappingSearch:
+        name = "searxng"
+
+        def search(self, query: str, *, limit: int) -> list[SearchHit]:
+            # Every perspective's top hit also appears at lower ranks in market's result list.
+            pool = [
+                ("https://market-top.example/a", "ai agents market 1 overview"),
+                ("https://usecase-top.example/b", "ai agents use_case 1 deployment"),
+                ("https://competitors-top.example/c", "ai agents competitors 1 vendor comparison"),
+                ("https://technical-top.example/d", "ai agents technical 1 architecture"),
+                ("https://risk-top.example/e", "ai agents risk_compliance 1 governance"),
+            ]
+            # Put the matching perspective's URL at rank 1, and all others below it.
+            ordered = sorted(pool, key=lambda pair: 0 if query.split()[2] in pair[1] else 1)
+            return [
+                SearchHit(
+                    url=url,
+                    title=f"{query} {title}",
+                    snippet=f"{query} {title}",
+                    provider=self.name,
+                    rank=rank,
+                )
+                for rank, (url, title) in enumerate(ordered[:limit], start=1)
+            ]
+
+    run = runner.create_run(db, "Enterprise AI agents overview?", enforce_limits=False)
+    llm = FakeLLM()
+    run = runner.advance_research_run(
+        db, runner.claim_run(db, run), llm=llm, providers=[OverlappingSearch()]
+    )
+    assert run.stage == "searching"
+    run = runner.advance_research_run(
+        db, runner.claim_run(db, run), llm=llm, providers=[OverlappingSearch()]
+    )
+    assert run.stage == "fetching"
+    assigned = {
+        s.url: s.perspective
+        for s in db.query(ResearchRunSource).filter_by(run_id=run.id).all()
+    }
+    assert assigned["https://market-top.example/a"] == "market"
+    assert assigned["https://usecase-top.example/b"] == "use_case"
+    assert assigned["https://competitors-top.example/c"] == "competitors"
+    assert assigned["https://technical-top.example/d"] == "technical"
+    assert assigned["https://risk-top.example/e"] == "risk_compliance"

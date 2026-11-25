@@ -151,7 +151,15 @@ def _lexical_search(
     return [item.id for item in items[:limit]]
 
 
-def _semantic_search_ids(db: Session, *, query: str, limit: int) -> list[str]:
+def _semantic_search_ids(
+    db: Session,
+    *,
+    query: str,
+    limit: int,
+    type_filter: str | None = None,
+    collection_method: str | None = None,
+    tag: str | None = None,
+) -> list[str]:
     """Return up to ``limit`` research ids ranked by embedding similarity.
 
     Falls back to the lexical Postgres path when pgvector is not selected so the
@@ -159,9 +167,19 @@ def _semantic_search_ids(db: Session, *, query: str, limit: int) -> list[str]:
     fusion degenerates to lexical order, which is safe and shape-preserving.
     """
     if settings.vector_data_provider == "pgvector":
-        return PgvectorProjection(embedding_client_from_settings()).search(db, query, limit)
+        filters = {
+            name: value
+            for name, value in (
+                ("type_filter", type_filter), ("collection_method", collection_method), ("tag", tag)
+            )
+            if value
+        }
+        return PgvectorProjection(embedding_client_from_settings()).search(
+            db, query, limit, **filters
+        )
     return _lexical_search(
-        db, query=query, limit=limit, type_filter=None, collection_method=None, tag=None
+        db, query=query, limit=limit, type_filter=type_filter,
+        collection_method=collection_method, tag=tag,
     )
 
 
@@ -182,11 +200,30 @@ def hybrid_search(payload: HybridSearchRequest, db: Session = Depends(get_db)) -
         collection_method=payload.collection_method,
         tag=payload.tag,
     )
-    semantic = _semantic_search_ids(db, query=query, limit=limit)
-    fused = reciprocal_rank_fusion([lexical, semantic])[:limit]
+    semantic = _semantic_search_ids(
+        db, query=query, limit=limit, type_filter=payload.type,
+        collection_method=payload.collection_method, tag=payload.tag,
+    )
+    # Recheck canonical metadata before limiting, including stale external-index hits.
+    candidates = set(lexical) | set(semantic)
+    statement = select(ResearchItem.id).where(
+        ResearchItem.id.in_(candidates), ResearchItem.status == "approved"
+    )
+    if payload.type:
+        statement = statement.where(ResearchItem.type == payload.type)
+    if payload.collection_method:
+        statement = statement.where(ResearchItem.collection_method == payload.collection_method)
+    if payload.tag:
+        statement = statement.where(ResearchItem.tags.any(Tag.name == payload.tag.lower()))
+    allowed = set(db.scalars(statement)) if candidates else set()
+    fused = reciprocal_rank_fusion([
+        [item_id for item_id in lexical if item_id in allowed],
+        [item_id for item_id in semantic if item_id in allowed],
+    ])[:limit]
+    items = hydrate_ranked_research(db, fused)
     return ResearchList(
-        items=hydrate_ranked_research(db, fused),
-        total=len(fused),
+        items=items,
+        total=len(items),
         page=1,
         page_size=limit,
     )
