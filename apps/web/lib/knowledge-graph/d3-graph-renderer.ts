@@ -1,18 +1,27 @@
 import * as d3 from "d3";
 import type { GraphEdge, GraphLayoutMode, GraphNode } from "./types";
 import { buildHierarchyLayout } from "./hierarchy-layout";
+import { buildOrbitLayout } from "./orbit-layout";
 import {
   rankRelationshipLabels,
   relationshipLabelBudget,
   isHierarchyEdgeType,
+  isHierarchyTreeEdge,
 } from "./graph-visualization";
 import {
   getNodeColor,
   getEdgeColor,
-  getNodeShape,
   getNodeRadius,
   getEdgeWidth,
   getEdgeDash,
+  canvasPalette,
+  resolveCanvasTheme,
+  nodeCardMetrics,
+  nodeCardWidth,
+  cardEdgePath,
+  facingCardEdgePath,
+  type CanvasPalette,
+  type CanvasTheme,
 } from "./d3-graph-styles";
 import { graphTypeLabel } from "./graph-theme";
 
@@ -28,13 +37,14 @@ type D3Node = GraphNode &
   d3.SimulationNodeDatum & {
     x?: number;
     y?: number;
+    cardWidth?: number;
     hierarchyX?: number;
     hierarchyY?: number;
     hierarchyWidth?: number;
     hierarchyHeight?: number;
   };
 type D3Edge = Omit<GraphEdge, "source" | "target"> &
-  d3.SimulationLinkDatum<D3Node> & {
+  Pick<d3.SimulationLinkDatum<D3Node>, "index"> & {
     source: string | D3Node;
     target: string | D3Node;
   };
@@ -44,6 +54,22 @@ const HIERARCHY_NODE_HEIGHT = 64;
 const HIERARCHY_BOARD_HEIGHT = 76;
 const HIERARCHY_LIST_NODE_WIDTH = 156;
 const HIERARCHY_LIST_NODE_HEIGHT = 48;
+const DEFAULT_MIN_ZOOM = .05;
+const MAX_ZOOM = 4;
+
+type DragState = {
+  nodeId: string;
+  identifier: "mouse" | number;
+  pointerOffset: [number, number];
+  origins: Array<{
+    node: D3Node;
+    x: number;
+    y: number;
+    fx: number | null | undefined;
+    fy: number | null | undefined;
+  }>;
+  moved: boolean;
+};
 
 type HierarchyLabels = {
   board: string;
@@ -92,8 +118,8 @@ export function boardFooter(
 }
 
 function graphEdge(edge: D3Edge): GraphEdge {
-  const source = typeof edge.source === "object" ? edge.source.id : String(edge.source);
-  const target = typeof edge.target === "object" ? edge.target.id : String(edge.target);
+  const source = typeof edge.source === "object" ? edge.source.id : edge.source;
+  const target = typeof edge.target === "object" ? edge.target.id : edge.target;
   return { ...edge, source, target };
 }
 
@@ -180,11 +206,25 @@ export class D3GraphRenderer {
   private selectedEdgeId: string | null = null;
   private hoveredNodeId: string | null = null;
   private hoveredEdgeId: string | null = null;
+  private keyboardEdgeId: string | null = null;
   private relationshipLabelRanks = new Map<string, number>();
   private adjacency = new Map<string, Set<string>>();
   private incidentEdges = new Map<string, Set<string>>();
   private nodeElementById = new Map<string, SVGGElement>();
   private edgeElementById = new Map<string, SVGElement>();
+  private edgeDataById = new Map<string, D3Edge>();
+  private nodeDataById = new Map<string, D3Node>();
+  private theme: CanvasTheme = "light";
+  private palette: CanvasPalette = canvasPalette("light");
+  private themeObserver: MutationObserver | null = null;
+  private themeMedia: MediaQueryList | null = null;
+  private onThemeMediaChange: (() => void) | null = null;
+  private activeDrag: DragState | null = null;
+  private touchingCanvas = false;
+  private pendingData: { nodes: GraphNode[]; edges: GraphEdge[] } | null = null;
+  private layoutFrame: number | null = null;
+  private fitAfterLayout = false;
+  private orbitRadii: number[] = [];
   private appliedRelationshipFocusId: string | null = null;
   private appliedFocusNodeIds = new Set<string>();
   private appliedFocusEdgeIds = new Set<string>();
@@ -194,7 +234,6 @@ export class D3GraphRenderer {
   private callbacks: D3GraphCallbacks;
   private lastTap = { id: "", at: 0 };
   private layoutMode: GraphLayoutMode = "relationship";
-  private labelsVisible = true;
   private hierarchyLabels: HierarchyLabels = {
     board: "Bảng",
     nodes: "nút",
@@ -214,13 +253,16 @@ export class D3GraphRenderer {
     const rect = this.containerElement.getBoundingClientRect();
     this.width = rect.width;
     this.height = rect.height;
+    this.theme = resolveCanvasTheme(document.documentElement);
+    this.palette = canvasPalette(this.theme);
 
     this.svg = d3
       .select(this.containerElement)
       .append("svg")
       .attr("width", this.width)
       .attr("height", this.height)
-      .attr("class", "d3-graph-svg");
+      .attr("class", "d3-graph-svg")
+      .style("touch-action", "none");
 
     this.container = this.svg.append("g").attr("class", "d3-graph-container");
 
@@ -234,7 +276,7 @@ export class D3GraphRenderer {
       .attr("markerWidth", 5)
       .attr("markerHeight", 5)
       .attr("orient", "auto");
-    arrow.append("path").attr("d", "M0,-4L8,0L0,4").attr("fill", "#9bb0b8");
+    arrow.append("path").attr("d", "M0,-4L8,0L0,4").attr("fill", this.palette.edgeArrow);
 
     const edgeGradient = defs.append("linearGradient")
       .attr("id", "d3-hierarchy-edge")
@@ -248,12 +290,6 @@ export class D3GraphRenderer {
     edgeGradientHover.append("stop").attr("offset", "0%").attr("stop-color", "#5969d8").attr("stop-opacity", "0.9");
     edgeGradientHover.append("stop").attr("offset", "100%").attr("stop-color", "#0b6f76").attr("stop-opacity", "1");
 
-    const relGradient = defs.append("radialGradient")
-      .attr("id", "d3-relationship-node")
-      .attr("cx", "35%").attr("cy", "30%").attr("r", "75%");
-    relGradient.append("stop").attr("offset", "0%").attr("stop-color", "#ffffff").attr("stop-opacity", "0.4");
-    relGradient.append("stop").attr("offset", "100%").attr("stop-color", "#0d2d3a").attr("stop-opacity", "0");
-
     this.communitiesGroup = this.container.append("g").attr("class", "d3-communities");
     this.edgesGroup = this.container.append("g").attr("class", "d3-edges");
     this.nodesGroup = this.container.append("g").attr("class", "d3-nodes");
@@ -261,22 +297,25 @@ export class D3GraphRenderer {
 
     this.zoomBehavior = d3
       .zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.05, 4])
+      .scaleExtent([DEFAULT_MIN_ZOOM, MAX_ZOOM])
+      .filter((event) => !this.activeDrag && (!event.ctrlKey || event.type === "wheel") && !event.button)
+      .on("start", (event) => {
+        if (event.sourceEvent) this.fitAfterLayout = false;
+      })
       .on("zoom", (event) => {
         this.currentZoom = event.transform.k;
         this.container.attr("transform", event.transform);
-        this.updateRelationshipLabels();
+        this.updateOrbitLabels();
         this.callbacks.onZoomChange(this.currentZoom);
       });
 
     this.svg.call(this.zoomBehavior);
+    this.bindTouchDrag();
 
     this.svg.on("click", (event) => {
       if (event.target === this.svg.node()) {
         this.callbacks.onClearSelection();
-        this.selectedNodeId = null;
-        this.selectedEdgeId = null;
-        this.updateSelection();
+        this.setSelection(null, null);
       }
     });
 
@@ -292,11 +331,51 @@ export class D3GraphRenderer {
       .on("tick", () => this.tick());
 
     this.simulation.stop();
+    this.observeTheme();
+  }
+
+  private observeTheme() {
+    if (typeof MutationObserver !== "undefined") {
+      this.themeObserver = new MutationObserver(() => this.refreshTheme());
+      this.themeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["data-theme"],
+      });
+    }
+    if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+      this.themeMedia = window.matchMedia("(prefers-color-scheme: dark)");
+      this.onThemeMediaChange = () => this.refreshTheme();
+      this.themeMedia.addEventListener?.("change", this.onThemeMediaChange);
+    }
+  }
+
+  private readTheme() {
+    const next = resolveCanvasTheme(document.documentElement);
+    if (next === this.theme) return false;
+    this.theme = next;
+    this.palette = canvasPalette(next);
+    this.svg.select("#arrowhead path").attr("fill", this.palette.edgeArrow);
+    return true;
+  }
+
+  private refreshTheme() {
+    if (this.activeDrag || this.touchingCanvas || !this.readTheme()) return;
+    this.clearRelationshipHoverEdges();
+    this.clearHierarchyHoverEdges();
+    this.clearRelationshipFocusClasses();
+    const restoreFocus = this.render();
+    this.updateSelection();
+    this.tick();
+    restoreFocus();
   }
 
   setLayoutMode(mode: GraphLayoutMode) {
     if (this.layoutMode === mode) return;
-    this.simulation.stop();
+    this.finishDrag(true, false);
+    this.touchingCanvas = false;
+    this.readTheme();
+    this.pendingData = null;
+    this.stopRelationshipLayout();
     this.clearRelationshipHoverEdges();
     this.clearHierarchyHoverEdges();
     this.clearRelationshipFocusClasses();
@@ -307,9 +386,15 @@ export class D3GraphRenderer {
     this.configureForces();
   }
 
+  setSelection(nodeId: string | null, edgeId: string | null) {
+    if (this.selectedNodeId === nodeId && this.selectedEdgeId === edgeId) return;
+    this.selectedNodeId = nodeId;
+    this.selectedEdgeId = edgeId;
+    this.updateSelection();
+  }
+
   setLabelsVisible(visible: boolean) {
-    this.labelsVisible = visible;
-    this.updateRelationshipLabels();
+    this.svg.classed("d3-labels-hidden", !visible);
   }
 
   setHierarchyLabels(labels: HierarchyLabels) {
@@ -343,7 +428,7 @@ export class D3GraphRenderer {
       .force("charge", d3.forceManyBody<D3Node>().strength((node) => -75 - Math.min(node.degree * 4, 90)))
       .force("link", d3.forceLink<D3Node, D3Edge>().id((d) => d.id).distance(86).strength(.22))
       .force("center", d3.forceCenter(this.width / 2, this.height / 2))
-      .force("collision", d3.forceCollide<D3Node>().radius((d) => getNodeRadius(d.type, d.degree) + 10).iterations(2))
+      .force("collision", d3.forceCollide<D3Node>().radius((d) => Math.max((d.cardWidth ?? 120) / 2, getNodeRadius(d.type, d.degree) + 10)).iterations(2))
       .force("x", d3.forceX<D3Node>((node) => anchors.get(node.type)?.x ?? this.width / 2).strength(.19))
       .force("y", d3.forceY<D3Node>((node) => anchors.get(node.type)?.y ?? this.height / 2).strength(.19))
       .alphaDecay(0.04);
@@ -351,13 +436,12 @@ export class D3GraphRenderer {
 
   private applyOrbitPositions() {
     if (this.layoutMode !== "orbit") return;
-    const centerX = this.width / 2;
-    const centerY = this.height / 2;
     const ranked = [...this.nodes].sort((left, right) =>
       right.degree - left.degree ||
       right.source_count - left.source_count ||
       left.type.localeCompare(right.type) ||
-      left.label.localeCompare(right.label),
+      left.label.localeCompare(right.label) ||
+      left.id.localeCompare(right.id),
     );
     const count = Math.max(1, ranked.length);
     const ringGroups: D3Node[][] = [[], [], [], []];
@@ -366,19 +450,17 @@ export class D3GraphRenderer {
       const ring = ratio < .04 ? 0 : ratio < .2 ? 1 : ratio < .55 ? 2 : 3;
       ringGroups[ring].push(node);
     });
-    const maxRadius = Math.max(150, Math.min(this.width, this.height) * .43);
-    const radii = [Math.min(52, maxRadius * .12), maxRadius * .4, maxRadius * .7, maxRadius];
-    ringGroups.forEach((group, ring) => {
-      group
-        .sort((left, right) => left.type.localeCompare(right.type) || left.label.localeCompare(right.label))
-        .forEach((node, index) => {
-          const angle = -Math.PI / 2 + (index / Math.max(1, group.length)) * Math.PI * 2;
-          const stagger = ring === 0 ? 0 : ((index % 3) - 1) * Math.min(16, radii[ring] * .05);
-          node.x = centerX + Math.cos(angle) * (radii[ring] + stagger);
-          node.y = centerY + Math.sin(angle) * (radii[ring] + stagger);
-          node.fx = node.x;
-          node.fy = node.y;
-        });
+    ringGroups.forEach((group) => {
+      group.sort((left, right) => left.type.localeCompare(right.type) || left.label.localeCompare(right.label));
+    });
+    const { positions, radii } = buildOrbitLayout(ringGroups, this.width, this.height);
+    this.orbitRadii = radii;
+    this.nodes.forEach((node) => {
+      if (node.fx != null || node.fy != null) return;
+      const position = positions.get(node.id);
+      if (!position) return;
+      node.x = position.x;
+      node.y = position.y;
     });
   }
 
@@ -396,16 +478,33 @@ export class D3GraphRenderer {
       node.hierarchyY = position?.y ?? this.height / 2;
       node.hierarchyWidth = position?.width;
       node.hierarchyHeight = position?.height;
+      // A node the user dragged keeps its placement (relayout clears the pin first).
+      if (node.fx != null || node.fy != null) return;
       node.x = node.hierarchyX;
       node.y = node.hierarchyY;
     });
+    // Children without their own placement inherit their board's manual offset.
+    this.nodes.filter((node) => isHierarchyBoard(node) && node.expanded_group).forEach((board) => {
+      const dx = (board.x ?? 0) - (board.hierarchyX ?? 0);
+      const dy = (board.y ?? 0) - (board.hierarchyY ?? 0);
+      this.boardChildren(board).forEach((node) => {
+        if (node.fx != null || node.fy != null) return;
+        node.x = (node.x ?? 0) + dx;
+        node.y = (node.y ?? 0) + dy;
+      });
+    });
   }
 
-  setData(nodes: GraphNode[], edges: GraphEdge[]) {
+  setData(nodes: GraphNode[], edges: GraphEdge[], fit = true) {
+    // D3 keeps the original datum and touch target for the duration of the gesture.
+    if (this.activeDrag || this.touchingCanvas) {
+      this.pendingData = { nodes, edges };
+      return;
+    }
+    this.stopRelationshipLayout();
     this.clearRelationshipHoverEdges();
     this.clearHierarchyHoverEdges();
     this.clearRelationshipFocusClasses();
-    const nodeMap = new Map(nodes.map((n) => [n.id, n]));
     const types = [...new Set(nodes.map((node) => node.type))].sort();
     const columns = Math.max(1, Math.ceil(Math.sqrt(types.length)));
     const rows = Math.max(1, Math.ceil(types.length / columns));
@@ -419,12 +518,24 @@ export class D3GraphRenderer {
       return (hash >>> 0) / 4294967295;
     };
     this.nodes = nodes.map((n) => {
+      const existing = this.nodeDataById.get(n.id);
+      const cardWidth = this.layoutMode === "hierarchy"
+        ? undefined
+        : nodeCardWidth(n.label, n.degree, this.layoutMode === "relationship" ? graphTypeLabel(n.type).toUpperCase() : undefined);
       if (this.layoutMode !== "relationship") {
         return {
           ...n,
-          x: this.nodes.find((existing) => existing.id === n.id)?.x ?? this.width / 2,
-          y: this.nodes.find((existing) => existing.id === n.id)?.y ?? this.height / 2,
+          cardWidth,
+          x: existing?.x ?? this.width / 2,
+          y: existing?.y ?? this.height / 2,
+          fx: existing?.fx,
+          fy: existing?.fy,
         };
+      }
+      // Free-drag contract: a refresh keeps the position the user gave each node, so
+      // exploration never yanks a canvas they just arranged. New nodes still scatter.
+      if (existing && existing.x !== undefined && existing.y !== undefined) {
+        return { ...n, cardWidth, x: existing.x, y: existing.y, fx: existing.fx, fy: existing.fy };
       }
       const index = typeIndex.get(n.type) ?? 0;
       const anchorX = ((index % columns) + .5) * (this.width / columns);
@@ -439,15 +550,17 @@ export class D3GraphRenderer {
     });
 
     const renderedNodeMap = new Map(this.nodes.map((node) => [node.id, node]));
-    this.edges = edges
-      .filter((e) => nodeMap.has(e.source) && nodeMap.has(e.target))
-      .map((e) => ({
-        ...e,
-        source: this.layoutMode === "hierarchy" ? renderedNodeMap.get(e.source)! : e.source,
-        target: this.layoutMode === "hierarchy" ? renderedNodeMap.get(e.target)! : e.target,
-      }) as unknown as D3Edge);
+    this.edges = edges.flatMap<D3Edge>((edge) => {
+      const source = renderedNodeMap.get(edge.source);
+      const target = renderedNodeMap.get(edge.target);
+      if (!source || !target) return [];
+      if (this.layoutMode === "hierarchy") return [{ ...edge, source, target }];
+      return [{ ...edge }];
+    });
 
     this.relationshipLabelRanks = rankRelationshipLabels(this.nodes);
+    this.nodeDataById = renderedNodeMap;
+    this.edgeDataById = new Map(this.edges.map((edge) => [edge.id, edge]));
     this.adjacency = new Map(this.nodes.map((node) => [node.id, new Set<string>()]));
     this.incidentEdges = new Map(this.nodes.map((node) => [node.id, new Set<string>()]));
     this.edges.forEach((edge) => {
@@ -466,39 +579,87 @@ export class D3GraphRenderer {
     const linkForce = this.simulation.force("link") as d3.ForceLink<D3Node, D3Edge> | null;
     linkForce?.links(this.edges);
 
-    this.render();
+    const restoreFocus = this.render();
     this.updateSelection();
-    this.updateRelationshipLabels();
     if (this.layoutMode === "hierarchy" || this.layoutMode === "orbit") {
       this.simulation.stop();
       this.tick();
-      if (this.layoutMode === "hierarchy") this.openHierarchyAtReadableScale();
-      else this.fitToScreen();
+      if (fit) {
+        if (this.layoutMode === "hierarchy") this.openHierarchyAtReadableScale();
+        else this.fitToScreen();
+      }
+      restoreFocus();
       return;
     }
-    this.settleRelationshipLayout(90, .72);
+    this.settleRelationshipLayout(90, .72, fit);
+    restoreFocus();
   }
 
-  private settleRelationshipLayout(iterations: number, alpha: number) {
+  private settleRelationshipLayout(iterations: number, alpha: number, fit = true) {
     if (this.layoutMode !== "relationship") return;
-    this.simulation.alpha(alpha).alphaTarget(0).stop().tick(iterations);
+    this.stopRelationshipLayout();
+    this.simulation.alpha(alpha).alphaTarget(0);
+    if (this.nodes.length < 180 && this.edges.length < 600) {
+      this.simulation.tick(iterations);
+      this.tick();
+      if (fit) this.fitToScreen(false);
+      return;
+    }
+
     this.tick();
-    this.fitToScreen(false);
+    if (fit) this.fitToScreen(false);
+    this.fitAfterLayout = fit;
+    let remaining = iterations;
+    const advance = () => {
+      this.layoutFrame = null;
+      const deadline = performance.now() + 8;
+      do {
+        this.simulation.tick();
+        remaining -= 1;
+      } while (remaining > 0 && performance.now() < deadline);
+      this.tick();
+      if (remaining > 0) {
+        this.layoutFrame = requestAnimationFrame(advance);
+      } else if (this.fitAfterLayout) {
+        this.fitAfterLayout = false;
+        this.fitToScreen(false);
+      }
+    };
+    this.layoutFrame = requestAnimationFrame(advance);
+  }
+
+  private stopRelationshipLayout() {
+    this.simulation.stop();
+    if (this.layoutFrame !== null) cancelAnimationFrame(this.layoutFrame);
+    this.layoutFrame = null;
+    this.fitAfterLayout = false;
   }
 
   private render() {
+    const active = document.activeElement;
+    const focused = active?.closest(".d3-node, .d3-edge");
+    const nodeId = focused?.getAttribute("data-node-id");
+    const edgeId = focused?.getAttribute("data-edge-id");
+    const restore = focused && this.svg.node()?.contains(focused);
     this.renderCommunities();
     this.renderEdges();
     this.renderNodes();
     this.renderLabels();
+    return () => {
+      if (!restore || !active || active.isConnected || document.activeElement !== document.body) return;
+      const replacement = nodeId ? this.nodeElementById.get(nodeId) : this.edgeElementById.get(edgeId ?? "");
+      const next = replacement && replacement.getAttribute("display") !== "none"
+        ? replacement
+        : this.nodesGroup.select<SVGGElement>(".d3-node").node();
+      next?.focus({ preventScroll: true });
+    };
   }
 
   private renderCommunities() {
     this.communitiesGroup.selectAll("*").remove();
     if (this.layoutMode === "hierarchy") return;
     if (this.layoutMode === "orbit") {
-      const maxRadius = Math.max(150, Math.min(this.width, this.height) * .43);
-      [Math.min(52, maxRadius * .12), maxRadius * .4, maxRadius * .7, maxRadius].forEach((radius, index) => {
+      this.orbitRadii.forEach((radius, index) => {
         this.communitiesGroup
           .append("circle")
           .attr("class", "d3-orbit-ring")
@@ -521,98 +682,121 @@ export class D3GraphRenderer {
     groups.append("circle").attr("class", "d3-community-halo");
   }
 
+  private edgeIsHidden(edge: D3Edge) {
+    const source = typeof edge.source === "object" ? edge.source : this.nodeDataById.get(edge.source);
+    return this.layoutMode === "hierarchy" && isHierarchyTreeEdge(edge) && Boolean(source?.expanded_group);
+  }
+
   private renderEdges() {
     const hierarchy = this.layoutMode === "hierarchy";
-    if (hierarchy) {
-      this.edgesGroup.selectAll("*").remove();
-      const edges = this.edgesGroup
-        .selectAll<SVGPathElement, D3Edge>("path.d3-edge")
-        .data(this.edges, (d) => d.id);
-      edges.exit().remove();
-      edges
-        .enter()
+    const select = (edge: D3Edge) => {
+      this.callbacks.onEdgeSelect(graphEdge(edge));
+      this.setSelection(null, edge.id);
+    };
+    const paths = this.edgesGroup
+      .selectAll<SVGPathElement, D3Edge>("path.d3-edge")
+      .data(this.edges, (edge) => edge.id)
+      .join((enter) => enter
         .append("path")
-        .attr("class", (d) => isHierarchyEdgeType(d.type)
-          ? "d3-edge d3-hierarchy-edge"
-          : "d3-edge d3-hierarchy-relation-edge")
-        .attr("data-edge-id", (d) => d.id)
-        .attr("display", (d) => {
-          const source = d.source as D3Node;
-          return source.expanded_group ? "none" : null;
-        })
+        .attr("data-edge-id", (edge) => edge.id)
+        .attr("role", "button")
         .attr("fill", "none")
-        .attr("stroke", (d) => isHierarchyEdgeType(d.type)
-          ? (d.id === this.selectedEdgeId ? "url(#d3-hierarchy-edge-active)" : "url(#d3-hierarchy-edge)")
-          : getEdgeColor(d.type))
-        .attr("stroke-width", (d) => isHierarchyEdgeType(d.type) ? 1.8 : 1.15)
         .attr("stroke-linecap", "round")
-        .attr("stroke-dasharray", (d) => isHierarchyEdgeType(d.type) ? getEdgeDash(d.type) : "4 5")
-        .attr("opacity", (d) => isHierarchyEdgeType(d.type) ? 0.72 : 0.1)
-        .attr("marker-end", (d) => isHierarchyEdgeType(d.type) ? null : "url(#arrowhead)")
-        .on("click", (event, d) => {
-          event.stopPropagation();
-          this.callbacks.onEdgeSelect(graphEdge(d));
-          this.selectedEdgeId = d.id;
-          this.selectedNodeId = null;
-          this.updateSelection();
-        })
-        .on("mouseenter", (event, d) => {
-          (event.currentTarget as SVGElement).classList.add("d3-edge-hovered");
-          this.hoveredEdgeId = d.id;
-          this.updateHover();
-        })
-        .on("mouseleave", (event) => {
-          (event.currentTarget as SVGElement).classList.remove("d3-edge-hovered");
-          this.hoveredEdgeId = null;
-          this.updateHover();
-        });
-    } else {
-      const edges = this.edgesGroup
-        .selectAll<SVGLineElement, D3Edge>("line.d3-edge")
-        .data(this.edges, (d) => d.id);
-      edges.exit().remove();
-      edges
-        .enter()
-        .append("line")
-        .attr("class", this.layoutMode === "relationship"
-          ? "d3-edge d3-network-edge"
-          : "d3-edge d3-orbit-edge")
-        .attr("stroke", (d) => getEdgeColor(d.type))
-        .attr("stroke-width", (d) => getEdgeWidth(d.type))
-        .attr("stroke-dasharray", (d) => getEdgeDash(d.type))
-        .attr("opacity", 0.6)
         .attr("marker-end", "url(#arrowhead)")
-        .on("click", (event, d) => {
+        .attr("aria-keyshortcuts", "ArrowUp ArrowDown Enter Space")
+        .on("click", (event, edge) => {
           event.stopPropagation();
-          this.callbacks.onEdgeSelect(graphEdge(d));
-          this.selectedEdgeId = d.id;
-          this.selectedNodeId = null;
-          this.updateSelection();
+          select(edge);
         })
-        .on("mouseenter", (event, d) => {
+        .on("keydown", (event, edge) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            event.stopPropagation();
+            select(edge);
+          } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+            event.preventDefault();
+            this.focusAdjacentEdge(edge.id, event.key === "ArrowDown" ? 1 : -1);
+          }
+        })
+        .on("focus", (event, edge) => {
+          const element = event.currentTarget as SVGElement;
+          this.setKeyboardEdge(edge.id);
+          element.classList.add("d3-edge-hovered");
+          if (element.matches(":focus-visible")) this.revealEdge(edge);
+        })
+        .on("blur", (event) => {
+          const element = event.currentTarget as SVGElement;
+          element.classList.toggle("d3-edge-hovered", element.matches(":hover"));
+        })
+        .on("mouseenter", (event, edge) => {
           (event.currentTarget as SVGElement).classList.add("d3-edge-hovered");
-          this.hoveredEdgeId = d.id;
+          this.hoveredEdgeId = edge.id;
           this.updateHover();
         })
         .on("mouseleave", (event) => {
-          (event.currentTarget as SVGElement).classList.remove("d3-edge-hovered");
+          const element = event.currentTarget as SVGElement;
+          element.classList.toggle("d3-edge-hovered", document.activeElement === element);
           this.hoveredEdgeId = null;
           this.updateHover();
-        });
-    }
+        }));
 
-    this.edgesGroup.selectAll<SVGElement, D3Edge>(".d3-edge")
-      .attr("stroke", (d) => hierarchy
-        ? isHierarchyEdgeType(d.type)
-          ? (d.id === this.selectedEdgeId ? "url(#d3-hierarchy-edge-active)" : "url(#d3-hierarchy-edge)")
-          : getEdgeColor(d.type)
-        : getEdgeColor(d.type))
-      .attr("stroke-width", (d) => hierarchy ? isHierarchyEdgeType(d.type) ? 1.8 : 1.15 : getEdgeWidth(d.type))
-      .attr("stroke-dasharray", (d) => hierarchy && !isHierarchyEdgeType(d.type) ? "4 5" : getEdgeDash(d.type));
     this.edgeElementById.clear();
-    this.edgesGroup.selectAll<SVGElement, D3Edge>(".d3-edge").each((edge, index, elements) => {
-      this.edgeElementById.set(edge.id, elements[index]);
-    });
+    paths
+      .attr("class", (edge) => {
+        if (hierarchy) return isHierarchyTreeEdge(edge) ? "d3-edge d3-hierarchy-edge" : "d3-edge d3-hierarchy-relation-edge";
+        return this.layoutMode === "relationship" ? "d3-edge d3-network-edge" : "d3-edge d3-orbit-edge";
+      })
+      .attr("display", (edge) => this.edgeIsHidden(edge) ? "none" : null)
+      .attr("aria-label", (edge) => {
+        const { source, target, type } = graphEdge(edge);
+        return `${this.nodeDataById.get(source)?.label ?? source} → ${this.nodeDataById.get(target)?.label ?? target} · ${type}`;
+      })
+      .attr("stroke-dasharray", (edge) => hierarchy && !isHierarchyTreeEdge(edge) ? "4 5" : getEdgeDash(edge.type))
+      .attr("tabindex", (edge) => this.edgeIsHidden(edge) ? null : -1)
+      .each((edge, index, elements) => this.edgeElementById.set(edge.id, elements[index]));
+    const first = this.edges.find((edge) => !this.edgeIsHidden(edge));
+    const previous = this.keyboardEdgeId && this.edgeDataById.get(this.keyboardEdgeId);
+    this.setKeyboardEdge(previous && !this.edgeIsHidden(previous) ? previous.id : first?.id ?? null);
+  }
+
+  private setKeyboardEdge(edgeId: string | null) {
+    if (this.keyboardEdgeId) {
+      const previous = this.edgeElementById.get(this.keyboardEdgeId);
+      if (previous?.getAttribute("display") !== "none") previous?.setAttribute("tabindex", "-1");
+    }
+    this.keyboardEdgeId = edgeId;
+    if (edgeId) this.edgeElementById.get(edgeId)?.setAttribute("tabindex", "0");
+  }
+
+  private focusAdjacentEdge(edgeId: string, offset: number) {
+    const visible = this.edges.filter((edge) => !this.edgeIsHidden(edge));
+    if (visible.length === 0) return;
+    const index = visible.findIndex((edge) => edge.id === edgeId);
+    const next = visible[(index + offset + visible.length) % visible.length];
+    this.edgeElementById.get(next.id)?.focus({ preventScroll: true });
+  }
+
+  private revealEdge(edge: D3Edge) {
+    // A single edge may span the entire graph. Reveal its source as the stable endpoint.
+    const source = typeof edge.source === "object" ? edge.source : this.nodeDataById.get(edge.source);
+    if (source) this.revealNode(source);
+  }
+
+  private revealNode(node: D3Node) {
+    if (this.activeDrag || this.touchingCanvas) return;
+    const transform = d3.zoomTransform(this.svg.node()!);
+    const x = transform.applyX(node.x ?? 0);
+    const y = transform.applyY(node.y ?? 0);
+    const width = (this.layoutMode === "hierarchy" ? hierarchyNodeWidth(node) : node.cardWidth ?? 120) * transform.k;
+    const height = (this.layoutMode === "hierarchy" ? hierarchyNodeHeight(node) : 44) * transform.k;
+    const margin = 22;
+    const minX = Math.min(this.width / 2, margin + width / 2);
+    const minY = Math.min(this.height / 2, margin + height / 2);
+    const dx = Math.max(minX, Math.min(this.width - minX, x)) - x;
+    const dy = Math.max(minY, Math.min(this.height - minY, y)) - y;
+    if (Math.abs(dx) < .5 && Math.abs(dy) < .5) return;
+    this.fitAfterLayout = false;
+    this.svg.call(this.zoomBehavior.transform, transform.translate(dx / transform.k, dy / transform.k));
   }
 
   private renderNodes() {
@@ -637,11 +821,7 @@ export class D3GraphRenderer {
       // whose nodes can be clicked but not tabbed to is unusable without a mouse.
       .attr("role", "button")
       .attr("tabindex", 0)
-      .attr("aria-label", (d) => hierarchy && isHierarchyBoard(d)
-        ? `${d.expanded_group ? this.hierarchyLabels.close : this.hierarchyLabels.open}: ${d.label}`
-        : hierarchy && ((d.collapsed_leaf_count ?? 0) > 0 || d.leaf_group_expanded)
-          ? `${d.leaf_group_expanded ? this.hierarchyLabels.close : this.hierarchyLabels.open}: ${d.label}`
-        : `${d.type}: ${d.label}`)
+      .style("touch-action", "none")
       .on("click", (event, d) => {
         event.stopPropagation();
         const now = Date.now();
@@ -653,18 +833,14 @@ export class D3GraphRenderer {
         }
         this.lastTap = { id: d.id, at: now };
         this.callbacks.onNodeSelect(d);
-        this.selectedNodeId = d.id;
-        this.selectedEdgeId = null;
-        this.updateSelection();
+        this.setSelection(d.id, null);
       })
       .on("keydown", (event, d) => {
         if (!["Enter", " "].includes(event.key)) return;
         event.preventDefault();
         event.stopPropagation();
         this.callbacks.onNodeSelect(d);
-        this.selectedNodeId = d.id;
-        this.selectedEdgeId = null;
-        this.updateSelection();
+        this.setSelection(d.id, null);
         // Enter opens a node that has somewhere to go; on a leaf it simply selects,
         // matching what a click does.
         const canOpen = this.layoutMode === "hierarchy"
@@ -673,7 +849,9 @@ export class D3GraphRenderer {
         if (canOpen) this.callbacks.onExpandNode(d.id);
       })
       .on("focus", (event, d) => {
-        (event.currentTarget as SVGGElement).classList.add("d3-node-hovered");
+        const element = event.currentTarget as SVGGElement;
+        element.classList.add("d3-node-hovered");
+        if (element.matches(":focus-visible")) this.revealNode(d);
         this.hoveredNodeId = d.id;
         this.updateHover();
       })
@@ -688,14 +866,17 @@ export class D3GraphRenderer {
         this.updateHover();
       })
       .on("mouseleave", (event) => {
-        (event.currentTarget as SVGGElement).classList.remove("d3-node-hovered");
+        const element = event.currentTarget as SVGGElement;
+        if (document.activeElement === element && element.matches(":focus-visible")) return;
+        element.classList.remove("d3-node-hovered");
         this.hoveredNodeId = null;
         this.updateHover();
       });
 
-    if (this.layoutMode === "relationship") nodesEnter.call(this.drag());
+    nodesEnter.call(this.drag());
     const callbacks = this.callbacks;
     const hierarchyLabels = this.hierarchyLabels;
+    const palette = this.palette;
     nodesEnter.each(function (d) {
       const group = d3.select(this);
       if (hierarchy) {
@@ -713,8 +894,8 @@ export class D3GraphRenderer {
           .attr("width", width)
           .attr("height", height)
           .attr("rx", 10)
-          .attr("fill", expandedBoard ? "#f5f3ff" : board ? "#f8f7ff" : "#ffffff")
-          .attr("stroke", "#d8e0ea")
+          .attr("fill", expandedBoard ? palette.hierarchyBoardFillExpanded : board ? palette.hierarchyBoardFill : palette.hierarchyCardFill)
+          .attr("stroke", palette.cardStroke)
           .attr("stroke-width", 1.5);
         group
           .append("rect")
@@ -750,7 +931,7 @@ export class D3GraphRenderer {
           .attr("y", expandedBoard ? headerTop + 43 : board ? 4 : 13)
           .attr("font-size", "12px")
           .attr("font-weight", "700")
-          .attr("fill", "#172033")
+          .attr("fill", palette.labelText)
           .text(d.label.length > (expandedBoard ? 46 : board ? 24 : 20)
             ? d.label.slice(0, expandedBoard ? 46 : board ? 24 : 20) + "…"
             : d.label);
@@ -763,7 +944,7 @@ export class D3GraphRenderer {
             .attr("text-anchor", expandedBoard ? "end" : "start")
             .attr("font-size", "9px")
             .attr("font-weight", "700")
-            .attr("fill", "#5969d8")
+            .attr("fill", palette.hierarchyAction)
             .text(boardFooter(d, expandedBoard, hierarchyLabels));
         }
         if ((d.collapsed_leaf_count ?? 0) > 0 || d.leaf_group_expanded) {
@@ -825,87 +1006,55 @@ export class D3GraphRenderer {
         group.append("title").text(`${d.label} · ${graphTypeLabel(d.type)}`);
         return;
       }
-      const shape = getNodeShape(d.type);
-      const radius = getNodeRadius(d.type, d.degree);
       const color = getNodeColor(d.type);
+      const visibleLabel = d.label.length > 26 ? `${d.label.slice(0, 26)}…` : d.label;
+      const visibleType = graphTypeLabel(d.type).toUpperCase();
+      const metrics = nodeCardMetrics(visibleLabel, d.degree);
+      const cardWidth = nodeCardWidth(d.label, d.degree, relationship ? visibleType : undefined);
+      d.cardWidth = cardWidth;
 
-      if (shape === "rect") {
-        group
-          .append("rect")
-          .attr("x", -radius * 1.2)
-          .attr("y", -radius * 0.9)
-          .attr("width", radius * 2.4)
-          .attr("height", radius * 1.8)
-          .attr("rx", 4)
-          .attr("fill", color)
-          .attr("stroke", "#fff")
-          .attr("stroke-width", 1.5);
-        group
-          .append("rect")
-          .attr("class", "d3-node-sheen")
-          .attr("x", -radius * 1.2)
-          .attr("y", -radius * 0.9)
-          .attr("width", radius * 2.4)
-          .attr("height", radius * 1.8)
-          .attr("rx", 4)
-          .attr("fill", "url(#d3-relationship-node)")
-          .attr("pointer-events", "none");
-      } else if (shape === "diamond") {
-        group
-          .append("path")
-          .attr("class", "d3-node-glyph")
-          .attr("d", `M 0 ${-radius} L ${radius} 0 L 0 ${radius} L ${-radius} 0 Z`)
-          .attr("fill", color)
-          .attr("stroke", "#fff")
-          .attr("stroke-width", 1.5);
-      } else {
-        group
-          .append("circle")
-          .attr("class", "d3-node-glyph")
-          .attr("r", radius)
-          .attr("fill", color)
-          .attr("stroke", "#fff")
-          .attr("stroke-width", 1.5);
-        group
-          .append("circle")
-          .attr("class", "d3-node-sheen")
-          .attr("r", radius)
-          .attr("fill", "url(#d3-relationship-node)")
-          .attr("pointer-events", "none");
-      }
-
-      // Keep compact glyphs easy to acquire with a mouse or touch. This transparent target is
-      // deliberately larger than the painted node and bubbles interaction to the node group.
+      // Weave-style node card: one rounded surface with a type accent, thin border and the
+      // label living inside the card — the same identity shape in every layout mode.
       group
-        .append("circle")
+        .append("rect")
+        .attr("class", "d3-node-glyph d3-node-card")
+        .attr("x", -cardWidth / 2)
+        .attr("y", -metrics.height / 2)
+        .attr("width", cardWidth)
+        .attr("height", metrics.height)
+        .attr("rx", metrics.radius)
+        .attr("fill", palette.cardFill)
+        .attr("stroke", palette.cardStroke)
+        .attr("stroke-width", 1.2);
+      group
+        .append("rect")
+        .attr("class", "d3-node-accent")
+        .attr("x", -cardWidth / 2 + 1)
+        .attr("y", -metrics.height / 2 + 1)
+        .attr("width", metrics.accentWidth)
+        .attr("height", metrics.height - 2)
+        .attr("rx", 2)
+        .attr("fill", color);
+
+      // Keep compact cards easy to acquire with a mouse or touch. This transparent target is
+      // deliberately larger than the painted card and bubbles interaction to the node group.
+      group
+        .append("rect")
         .attr("class", "d3-node-hit-target")
-        .attr("r", Math.max(22, radius))
+        .attr("x", -cardWidth / 2 - 6)
+        .attr("y", -metrics.height / 2 - 6)
+        .attr("width", cardWidth + 12)
+        .attr("height", metrics.height + 12)
+        .attr("rx", metrics.radius + 4)
         .attr("fill", "transparent")
         .attr("pointer-events", "all");
 
-      const visibleLabel = d.label.length > 28 ? `${d.label.slice(0, 28)}…` : d.label;
-      const visibleType = graphTypeLabel(d.type).toUpperCase();
-      const labelWidth = Math.min(
-        196,
-        Math.max(52, visibleLabel.length * 6.2 + 18, relationship ? visibleType.length * 5.4 + 18 : 0),
-      );
-      group
-        .append("rect")
-        .attr("class", "d3-node-label-backdrop")
-        .attr("x", -labelWidth / 2)
-        .attr("y", radius + 6)
-        .attr("width", labelWidth)
-        .attr("height", relationship ? 38 : 22)
-        .attr("rx", relationship ? 9 : 11)
-        .attr("fill", "rgba(255,255,255,.96)")
-        .attr("stroke", "rgba(99,102,241,.22)")
-        .attr("stroke-width", .75);
       if (relationship) {
         group
           .append("text")
           .attr("class", "d3-node-type-label")
-          .attr("text-anchor", "middle")
-          .attr("y", radius + 18)
+          .attr("x", -cardWidth / 2 + 14)
+          .attr("y", -5)
           .attr("font-size", "7.5px")
           .attr("font-weight", "800")
           .attr("letter-spacing", ".08em")
@@ -915,17 +1064,29 @@ export class D3GraphRenderer {
       group
         .append("text")
         .attr("class", "d3-node-label")
-        .attr("text-anchor", "middle")
-        .attr("dy", radius + (relationship ? 34 : 22))
-        .attr("font-size", "10.5px")
+        .attr("x", -cardWidth / 2 + 14)
+        .attr("y", relationship ? 12 : 4)
+        .attr("font-size", "11px")
         .attr("font-weight", "700")
-        .attr("fill", "#263247")
+        .attr("fill", palette.labelText)
         .text(visibleLabel);
+      group.append("title").text(`${d.label} · ${graphTypeLabel(d.type)}`);
     });
 
-    this.nodesGroup.selectAll(".d3-node").each(function (d) {
+    nodesEnter.merge(nodes)
+      .attr("data-node-type", (node) => node.type)
+      .attr("aria-label", (node) => {
+        if (hierarchy && isHierarchyBoard(node) && (node.child_count ?? 0) > 0) {
+          return `${node.expanded_group ? hierarchyLabels.close : hierarchyLabels.open}: ${node.label}`;
+        }
+        if (hierarchy && ((node.collapsed_leaf_count ?? 0) > 0 || node.leaf_group_expanded)) {
+          return `${node.leaf_group_expanded ? hierarchyLabels.close : hierarchyLabels.open}: ${node.label}`;
+        }
+        return `${node.type}: ${node.label}`;
+      })
+      .each(function (data) {
       const node = d3.select(this);
-      const data = d as D3Node;
+      node.select("title").text(`${data.label} · ${graphTypeLabel(data.type)}`);
       if (hierarchy) {
         const color = getNodeColor(data.type);
         const board = isHierarchyBoard(data);
@@ -942,53 +1103,41 @@ export class D3GraphRenderer {
           .text(boardFooter(data, Boolean(data.expanded_group), hierarchyLabels));
         return;
       }
-      const radius = getNodeRadius(data.type, data.degree);
-      const shape = getNodeShape(data.type);
       const color = getNodeColor(data.type);
-
-      if (shape === "rect") {
-        node.select(".d3-node-glyph")
-          .attr("x", -radius * 1.2)
-          .attr("y", -radius * 0.9)
-          .attr("width", radius * 2.4)
-          .attr("height", radius * 1.8)
-          .attr("fill", color);
-        node.select(".d3-node-sheen")
-          .attr("x", -radius * 1.2)
-          .attr("y", -radius * 0.9)
-          .attr("width", radius * 2.4)
-          .attr("height", radius * 1.8);
-      } else if (shape === "diamond") {
-        node.select(".d3-node-glyph")
-          .attr("d", `M 0 ${-radius} L ${radius} 0 L 0 ${radius} L ${-radius} 0 Z`)
-          .attr("fill", color);
-      } else {
-        node.select(".d3-node-glyph")
-          .attr("r", radius)
-          .attr("fill", color);
-        node.select(".d3-node-sheen").attr("r", radius);
-      }
-
-      const visibleLabel = data.label.length > 28 ? data.label.slice(0, 28) + "…" : data.label;
+      const visibleLabel = data.label.length > 26 ? data.label.slice(0, 26) + "…" : data.label;
       const visibleType = graphTypeLabel(data.type).toUpperCase();
-      const labelWidth = Math.min(
-        196,
-        Math.max(52, visibleLabel.length * 6.2 + 18, relationship ? visibleType.length * 5.4 + 18 : 0),
-      );
-      node.select(".d3-node-label-backdrop")
-        .attr("x", -labelWidth / 2)
-        .attr("y", radius + 6)
-        .attr("width", labelWidth)
-        .attr("height", relationship ? 38 : 22)
-        .attr("rx", relationship ? 9 : 11);
+      const metrics = nodeCardMetrics(visibleLabel, data.degree);
+      const cardWidth = nodeCardWidth(data.label, data.degree, relationship ? visibleType : undefined);
+      data.cardWidth = cardWidth;
+
+      node.select(".d3-node-card")
+        .attr("x", -cardWidth / 2)
+        .attr("y", -metrics.height / 2)
+        .attr("width", cardWidth)
+        .attr("height", metrics.height)
+        .attr("rx", metrics.radius)
+        .attr("fill", palette.cardFill)
+        .attr("stroke", palette.cardStroke);
+      node.select(".d3-node-accent")
+        .attr("x", -cardWidth / 2 + 1)
+        .attr("y", -metrics.height / 2 + 1)
+        .attr("width", metrics.accentWidth)
+        .attr("height", metrics.height - 2)
+        .attr("fill", color);
+      node.select(".d3-node-hit-target")
+        .attr("x", -cardWidth / 2 - 6)
+        .attr("y", -metrics.height / 2 - 6)
+        .attr("width", cardWidth + 12)
+        .attr("height", metrics.height + 12);
       node.select(".d3-node-type-label")
-        .attr("y", radius + 18)
+        .attr("x", -cardWidth / 2 + 14)
         .attr("fill", color)
         .text(visibleType);
       node.select(".d3-node-label")
-        .attr("dy", radius + (relationship ? 34 : 22))
+        .attr("x", -cardWidth / 2 + 14)
+        .attr("fill", palette.labelText)
         .text(visibleLabel);
-    });
+      });
     this.nodeElementById.clear();
     this.nodesGroup.selectAll<SVGGElement, D3Node>(".d3-node").each((node, index, elements) => {
       this.nodeElementById.set(node.id, elements[index]);
@@ -1041,37 +1190,36 @@ export class D3GraphRenderer {
     });
   }
 
-  private tick() {
+  private edgePathFor(edge: D3Edge): string {
+    const source = typeof edge.source === "object" ? edge.source : this.nodeDataById.get(edge.source);
+    const target = typeof edge.target === "object" ? edge.target : this.nodeDataById.get(edge.target);
+    if (!source || !target) return "";
+    const sourceX = source.x ?? 0;
+    const sourceY = source.y ?? 0;
+    const targetX = target.x ?? 0;
+    const targetY = target.y ?? 0;
     if (this.layoutMode === "hierarchy") {
-      this.edgesGroup
-        .selectAll<SVGPathElement, D3Edge>(".d3-edge")
-        .attr("d", (d) => {
-          const source = d.source as D3Node;
-          const target = d.target as D3Node;
-          if (!isHierarchyEdgeType(d.type)) {
-            const sourceX = source.x ?? 0;
-            const sourceY = source.y ?? 0;
-            const targetX = target.x ?? 0;
-            const targetY = target.y ?? 0;
-            const midpointX = (sourceX + targetX) / 2;
-            const midpointY = Math.min(sourceY, targetY) - Math.min(90, Math.abs(targetX - sourceX) * .12 + 24);
-            return `M ${sourceX} ${sourceY} Q ${midpointX} ${midpointY}, ${targetX} ${targetY}`;
-          }
-          const sourceX = (source.x ?? 0) + hierarchyNodeWidth(source) / 2;
-          const sourceY = source.y ?? 0;
-          const targetX = (target.x ?? 0) - hierarchyNodeWidth(target) / 2;
-          const targetY = target.y ?? 0;
-          const midpoint = sourceX + (targetX - sourceX) / 2;
-          return `M ${sourceX} ${sourceY} C ${midpoint} ${sourceY}, ${midpoint} ${targetY}, ${targetX} ${targetY}`;
-        });
-    } else {
-      this.edgesGroup
-        .selectAll<SVGLineElement, D3Edge>(".d3-edge")
-        .attr("x1", (d) => (d.source as D3Node).x ?? 0)
-        .attr("y1", (d) => (d.source as D3Node).y ?? 0)
-        .attr("x2", (d) => (d.target as D3Node).x ?? 0)
-        .attr("y2", (d) => (d.target as D3Node).y ?? 0);
+      if (!isHierarchyTreeEdge(edge)) {
+        const startY = sourceY - hierarchyNodeHeight(source) / 2;
+        const endY = targetY - hierarchyNodeHeight(target) / 2;
+        const controlY = Math.min(startY, endY) - Math.min(90, Math.abs(targetX - sourceX) * .12 + 24);
+        return `M ${sourceX} ${startY} C ${sourceX} ${controlY}, ${targetX} ${controlY}, ${targetX} ${endY}`;
+      }
+      return cardEdgePath(
+        sourceX, sourceY, hierarchyNodeWidth(source),
+        targetX, targetY, hierarchyNodeWidth(target),
+      );
     }
+    return facingCardEdgePath(
+      sourceX, sourceY, source.cardWidth ?? 120,
+      targetX, targetY, target.cardWidth ?? 120,
+    );
+  }
+
+  private tick() {
+    this.edgesGroup
+      .selectAll<SVGPathElement, D3Edge>(".d3-edge")
+      .attr("d", (d) => this.edgePathFor(d));
 
     this.nodesGroup
       .selectAll<SVGGElement, D3Node>(".d3-node")
@@ -1083,9 +1231,10 @@ export class D3GraphRenderer {
     if (this.layoutMode === "relationship") this.updateCommunityHalos();
   }
 
-  private updateCommunityHalos() {
+  private updateCommunityHalos(onlyType?: string) {
     const padding = 42;
     this.communitiesGroup.selectAll<SVGGElement, string>("g.d3-community").each((type, index, elements) => {
+      if (onlyType && type !== onlyType) return;
       const members = this.nodes.filter((node) => node.type === type && node.x !== undefined && node.y !== undefined);
       if (members.length < 2) return;
       const minX = d3.min(members, (node) => node.x ?? 0) ?? 0;
@@ -1111,55 +1260,200 @@ export class D3GraphRenderer {
     });
   }
 
+  private boardChildren(board: D3Node): D3Node[] {
+    if (!isHierarchyBoard(board) || !board.expanded_group) return [];
+    const children = new Set<D3Node>();
+    this.incidentEdges.get(board.id)?.forEach((id) => {
+      const edge = this.edgeDataById.get(id);
+      if (edge && isHierarchyEdgeType(edge.type) && edge.source === board && typeof edge.target === "object") {
+        children.add(edge.target);
+      }
+    });
+    return [...children];
+  }
+
   private drag() {
-    return d3
-      .drag<SVGGElement, D3Node>()
-      .on("start", (event, d) => {
-        if (!event.active) this.simulation.alphaTarget(0.3).restart();
-        d.fx = d.x;
-        d.fy = d.y;
-      })
-      .on("drag", (event, d) => {
-        d.fx = event.x;
-        d.fy = event.y;
-      })
-      .on("end", (event, d) => {
-        if (!event.active) this.simulation.alphaTarget(0).stop();
-        d.fx = null;
-        d.fy = null;
+    return d3.drag<SVGGElement, D3Node>()
+      .touchable(false)
+      .filter((event) => !this.activeDrag && !this.touchingCanvas &&
+        !event.ctrlKey && !event.button && !this.isNodeAction(event.target))
+      .on("start", (event, node) => {
+        const drag = this.beginDrag(node, "mouse");
+        event.on("drag", (move: d3.D3DragEvent<SVGGElement, D3Node, D3Node>) => {
+          if (this.activeDrag === drag) this.moveDrag(drag, move.x, move.y);
+        });
+        event.on("end", () => {
+          if (this.activeDrag === drag) this.finishDrag();
+        });
       });
+  }
+
+  private isNodeAction(target: EventTarget | null) {
+    return target instanceof Element && Boolean(target.closest(".d3-hierarchy-leaf-action, .d3-hierarchy-port.output"));
+  }
+
+  private bindTouchDrag() {
+    // Let D3 zoom receive the native second touch along with the first touch's
+    // current location. Cancel the card move before D3 zoom takes over.
+    this.svg
+      .on("touchstart.pinch", (event: TouchEvent) => {
+        if (event.touches.length < 2) return;
+        this.touchingCanvas = true;
+        if (typeof this.activeDrag?.identifier === "number") this.finishDrag(true, false);
+      }, { capture: true })
+      .on("touchend.pinch touchcancel.pinch", (event: TouchEvent) => {
+        if (!this.touchingCanvas || event.touches.length) return;
+        this.touchingCanvas = false;
+        // D3 zoom still needs this touch-end event before we can replace the SVG targets.
+        queueMicrotask(() => {
+          if (this.svg.node()?.isConnected) this.flushDeferredDragUpdates();
+        });
+      }, { capture: true });
+
+    this.nodesGroup
+      .on("touchstart.card", (event: TouchEvent) => {
+        if (this.touchingCanvas || this.activeDrag || this.isNodeAction(event.target)) return;
+        const target = event.target instanceof Element && event.target.closest<SVGGElement>(".d3-node");
+        const touch = event.changedTouches[0];
+        if (!target || !touch) return;
+        const node = d3.select<SVGGElement, D3Node>(target).datum();
+        event.stopPropagation();
+        this.beginDrag(node, touch.identifier, d3.pointer(touch, this.nodesGroup.node()));
+      })
+      .on("touchmove.card", (event: TouchEvent) => {
+        const drag = this.activeDrag;
+        if (!drag || drag.identifier === "mouse") return;
+        const touch = Array.from(event.changedTouches).find((item) => item.identifier === drag.identifier);
+        if (!touch) return;
+        event.stopPropagation();
+        event.preventDefault();
+        const [x, y] = d3.pointer(touch, this.nodesGroup.node());
+        this.moveDrag(drag, x + drag.pointerOffset[0], y + drag.pointerOffset[1]);
+      }, { passive: false })
+      .on("touchend.card touchcancel.card", (event: TouchEvent) => {
+        const drag = this.activeDrag;
+        if (!drag || !Array.from(event.changedTouches).some((touch) => touch.identifier === drag.identifier)) return;
+        event.stopPropagation();
+        this.finishDrag(event.type === "touchcancel");
+      });
+  }
+
+  private beginDrag(node: D3Node, identifier: DragState["identifier"], point?: [number, number]): DragState {
+    this.stopRelationshipLayout();
+    this.svg.interrupt();
+    const drag: DragState = {
+      nodeId: node.id,
+      identifier,
+      pointerOffset: point ? [(node.x ?? 0) - point[0], (node.y ?? 0) - point[1]] : [0, 0],
+      origins: [node, ...this.boardChildren(node)].map((item) => ({
+        node: item,
+        x: item.x ?? 0,
+        y: item.y ?? 0,
+        fx: item.fx,
+        fy: item.fy,
+      })),
+      moved: false,
+    };
+    this.activeDrag = drag;
+    return drag;
+  }
+
+  private moveDrag(drag: DragState, x: number, y: number) {
+    const dx = x - drag.origins[0].x;
+    const dy = y - drag.origins[0].y;
+    if (!drag.moved && Math.hypot(dx, dy) < .01) return;
+    if (!drag.moved) {
+      drag.moved = true;
+      this.nodeElementById.get(drag.nodeId)?.classList.add("d3-node-dragging");
+      this.svg.classed("d3-dragging", true);
+    }
+    drag.origins.forEach((origin) => {
+      origin.node.x = origin.x + dx;
+      origin.node.y = origin.y + dy;
+    });
+    drag.origins.forEach(({ node }) => this.updateDraggedGeometry(node));
+  }
+
+  private finishDrag(cancelled = false, flush = true) {
+    const drag = this.activeDrag;
+    if (!drag) return;
+    if (drag.moved) {
+      drag.origins.forEach(({ node, x, y, fx, fy }) => {
+        if (cancelled) {
+          Object.assign(node, { x, y, fx, fy });
+        } else if (node.id === drag.nodeId || fx != null || fy != null) {
+          node.fx = node.x;
+          node.fy = node.y;
+        }
+      });
+      if (cancelled) drag.origins.forEach(({ node }) => this.updateDraggedGeometry(node));
+    }
+    this.nodeElementById.get(drag.nodeId)?.classList.remove("d3-node-dragging");
+    this.svg.classed("d3-dragging", false);
+    this.activeDrag = null;
+    if (flush) this.flushDeferredDragUpdates();
+  }
+
+  private flushDeferredDragUpdates() {
+    if (this.activeDrag || this.touchingCanvas) return;
+    const data = this.pendingData;
+    this.pendingData = null;
+    if (data) {
+      this.readTheme();
+      this.setData(data.nodes, data.edges, false);
+    } else {
+      this.refreshTheme();
+    }
+    this.resize(false);
+  }
+
+  private updateDraggedGeometry(node: D3Node) {
+    const x = node.x ?? 0;
+    const y = node.y ?? 0;
+    const element = this.nodeElementById.get(node.id);
+    element?.setAttribute("transform", `translate(${x},${y})`);
+    const overlay = this.labelsGroup.select<SVGGElement>(`[data-node-id="${node.id}"]`);
+    if (!overlay.empty()) overlay.attr("transform", `translate(${x},${y})`);
+    (this.incidentEdges.get(node.id) ?? new Set<string>()).forEach((edgeId) => {
+      const edge = this.edgeDataById.get(edgeId);
+      const edgeElement = this.edgeElementById.get(edgeId);
+      if (!edge || !edgeElement) return;
+      edgeElement.setAttribute("d", this.edgePathFor(edge));
+    });
+    if (this.layoutMode === "relationship") this.updateCommunityHalos(node.type);
   }
 
   private updateSelection() {
     const selectedNodeId = this.selectedNodeId;
     const selectedEdgeId = this.selectedEdgeId;
     const hierarchy = this.layoutMode === "hierarchy";
+    const palette = this.palette;
 
     this.nodesGroup.selectAll<SVGGElement, D3Node>(".d3-node").each(function (d) {
       const node = d3.select(this);
       const isSelected = d.id === selectedNodeId;
       if (hierarchy) {
         node.select(".d3-hierarchy-card")
-          .attr("stroke", isSelected ? "#6366f1" : "#d8e0ea")
+          .attr("stroke", isSelected ? palette.cardStrokeSelected : palette.cardStroke)
           .attr("stroke-width", isSelected ? 2.5 : 1.5);
         return;
       }
-      node.select(".d3-node-glyph")
-        .attr("stroke", isSelected ? "#a5b4fc" : "#dbeafe")
-        .attr("stroke-width", isSelected ? 3 : 1.5);
+      node.select(".d3-node-card")
+        .attr("stroke", isSelected ? palette.cardStrokeSelected : palette.cardStroke)
+        .attr("stroke-width", isSelected ? 2 : 1.2);
     });
 
-    this.edgesGroup.selectAll<SVGElement, D3Edge>(".d3-edge").each(function (d) {
-      const edge = d3.select(this);
-      const isSelected = d.id === selectedEdgeId;
-      edge
-        .attr("opacity", isSelected ? 1 : hierarchy ? isHierarchyEdgeType(d.type) ? .72 : .1 : 0.6)
-        .attr("stroke-width", isSelected ? 3 : hierarchy ? isHierarchyEdgeType(d.type) ? 1.8 : 1.15 : getEdgeWidth(d.type));
-    });
-    if (!hierarchy) {
-      this.updateRelationshipFocus();
-      this.updateRelationshipLabels();
-    } else this.updateHierarchyFocus();
+    if (hierarchy) {
+      this.updateHierarchyFocus();
+      return;
+    }
+
+    this.edgesGroup.selectAll<SVGElement, D3Edge>(".d3-edge")
+      .attr("stroke", (edge) => getEdgeColor(edge.type))
+      .attr("opacity", (edge) => edge.id === selectedEdgeId ? 1 : .6)
+      .attr("stroke-width", (edge) => edge.id === selectedEdgeId ? 3 : getEdgeWidth(edge.type));
+    this.updateRelationshipFocus();
+    this.updateOrbitLabels();
   }
 
   private updateHover() {
@@ -1181,9 +1475,13 @@ export class D3GraphRenderer {
     const focusId = this.selectedNodeId;
     this.edgesGroup.selectAll<SVGPathElement, D3Edge>(".d3-edge")
       .interrupt()
+      .attr("stroke", (edge) => {
+        if (!isHierarchyTreeEdge(edge)) return getEdgeColor(edge.type);
+        return edge.id === this.selectedEdgeId ? "url(#d3-hierarchy-edge-active)" : "url(#d3-hierarchy-edge)";
+      })
       .attr("opacity", (edge) => {
         if (edge.id === this.selectedEdgeId || edge.id === this.hoveredEdgeId) return 1;
-        const structural = isHierarchyEdgeType(edge.type);
+        const structural = isHierarchyTreeEdge(edge);
         if (!focusId) return structural ? .72 : .1;
         const safe = graphEdge(edge);
         const incident = safe.source === focusId || safe.target === focusId;
@@ -1194,8 +1492,8 @@ export class D3GraphRenderer {
         if (edge.id === this.selectedEdgeId || edge.id === this.hoveredEdgeId) return 3;
         const safe = graphEdge(edge);
         const incident = focusId && (safe.source === focusId || safe.target === focusId);
-        if (incident) return isHierarchyEdgeType(edge.type) ? 2.3 : 1.8;
-        return isHierarchyEdgeType(edge.type) ? 1.8 : 1.15;
+        if (incident) return isHierarchyTreeEdge(edge) ? 2.3 : 1.8;
+        return isHierarchyTreeEdge(edge) ? 1.8 : 1.15;
       });
   }
 
@@ -1276,22 +1574,10 @@ export class D3GraphRenderer {
     this.svg.classed("d3-relationship-focused", false);
   }
 
-  private updateRelationshipLabels() {
-    if (this.layoutMode === "hierarchy") return;
-    if (this.layoutMode === "relationship") {
-      // Network labels follow one predictable rule: hidden at rest and revealed only by the
-      // local hover/focus class. Importance still controls glyph size, never overview labels.
-      this.nodesGroup.selectAll<SVGGElement, D3Node>(".d3-node").each(function () {
-        d3.select(this).selectAll<SVGElement, D3Node>(".d3-node-type-label, .d3-node-label, .d3-node-label-backdrop")
-          .attr("opacity", 0);
-      });
-      return;
-    }
-    const budget = this.layoutMode === "orbit"
-      ? Math.min(10, relationshipLabelBudget(this.nodes.length, this.currentZoom))
-      : relationshipLabelBudget(this.nodes.length, this.currentZoom);
-    const visible = (node: D3Node) =>
-      this.labelsVisible && (this.relationshipLabelRanks.get(node.id) ?? Infinity) < budget;
+  private updateOrbitLabels() {
+    if (this.layoutMode !== "orbit") return;
+    const budget = Math.min(10, relationshipLabelBudget(this.nodes.length, this.currentZoom));
+    const visible = (node: D3Node) => (this.relationshipLabelRanks.get(node.id) ?? Infinity) < budget;
 
     this.nodesGroup.selectAll<SVGGElement, D3Node>(".d3-node").each(function (node) {
       const opacity = visible(node) ? 1 : 0;
@@ -1359,6 +1645,13 @@ export class D3GraphRenderer {
   }
 
   relayout() {
+    // Auto-arrange: free-drag placements are released and the deterministic layout
+    // for the current mode takes over again.
+    if (this.activeDrag) this.finishDrag();
+    this.nodes.forEach((node) => {
+      node.fx = null;
+      node.fy = null;
+    });
     if (this.layoutMode === "hierarchy") {
       this.applyHierarchyPositions();
       this.tick();
@@ -1375,7 +1668,8 @@ export class D3GraphRenderer {
     this.settleRelationshipLayout(110, 1);
   }
 
-  resize() {
+  resize(fit = true) {
+    if (this.activeDrag) return;
     const rect = this.containerElement.getBoundingClientRect();
     if (!dimensionsChanged(
       { width: this.width, height: this.height },
@@ -1389,23 +1683,32 @@ export class D3GraphRenderer {
       this.tick();
       // A viewport resize is an explicit screen-fit event. Initial data still opens at a readable
       // panning scale, while resize keeps every rendered card on the newly available canvas.
-      this.fitToScreen(false);
+      if (fit) this.fitToScreen(false);
       return;
     }
     if (this.layoutMode === "orbit") {
       this.applyOrbitPositions();
       this.renderCommunities();
       this.tick();
-      this.fitToScreen();
+      if (fit) this.fitToScreen();
       return;
     }
     this.configureForces();
-    this.settleRelationshipLayout(48, .42);
+    this.settleRelationshipLayout(48, .42, fit);
   }
 
   destroy() {
+    this.finishDrag(true, false);
+    this.pendingData = null;
     this.simulation.stop();
     this.clearHierarchyHoverEdges();
+    this.themeObserver?.disconnect();
+    this.themeObserver = null;
+    if (this.themeMedia && this.onThemeMediaChange) {
+      this.themeMedia.removeEventListener?.("change", this.onThemeMediaChange);
+    }
+    this.themeMedia = null;
+    this.onThemeMediaChange = null;
     this.svg.remove();
   }
 

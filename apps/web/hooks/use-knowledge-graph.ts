@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getKnowledgeGraph, getNodeNeighbors } from "@/lib/knowledge-graph/graph-api";
 import { mergeKnowledgeGraphs } from "@/lib/knowledge-graph/graph-mapper";
@@ -27,8 +27,21 @@ type GraphOptions = {
   rootNodeId?: string;
   depth?: number;
   limit?: number;
+  full?: boolean;
   enabled?: boolean;
 };
+
+type ExpansionScope = { filterKey: string; generation: number; pending: Set<string> };
+type Expansion = {
+  scope: ExpansionScope;
+  graph?: KnowledgeGraph;
+  pendingNodeIds: ReadonlySet<string>;
+  error?: unknown;
+};
+
+function forScope(expansion: Expansion | null, scope: ExpansionScope): Expansion {
+  return expansion?.scope === scope ? expansion : { scope, pendingNodeIds: new Set() };
+}
 
 export function useKnowledgeGraph(filters: GraphFilters, options: GraphOptions = {}) {
   const queryClient = useQueryClient();
@@ -37,6 +50,7 @@ export function useKnowledgeGraph(filters: GraphFilters, options: GraphOptions =
     rootNodeId: options.rootNodeId,
     depth: options.depth ?? 1,
     limit: options.limit,
+    full: options.full,
   };
   const filterKey = JSON.stringify({ filters, request });
   const query = useQuery({
@@ -47,40 +61,76 @@ export function useKnowledgeGraph(filters: GraphFilters, options: GraphOptions =
     gcTime: GRAPH_QUERY_GC_TIME_MS,
     refetchOnWindowFocus: false,
   });
-  const [expanded, setExpanded] = useState<{ key: string; graph: KnowledgeGraph } | null>(null);
-  const [expandingNodeId, setExpandingNodeId] = useState<string | null>(null);
+  const [expansion, setExpansion] = useState<Expansion | null>(null);
+  const [resetGeneration, setResetGeneration] = useState(0);
+  // A fresh scope is required even when switching away and back with identical filters.
+  const scope = useMemo<ExpansionScope>(() => ({
+    filterKey,
+    generation: resetGeneration,
+    pending: new Set(),
+  }), [filterKey, resetGeneration]);
+  const activeScope = useRef<ExpansionScope | null>(null);
 
+  useLayoutEffect(() => {
+    activeScope.current = scope;
+    return () => {
+      activeScope.current = null;
+    };
+  }, [scope]);
+
+  const currentExpansion = forScope(expansion, scope);
   const graph = useMemo(() => {
     if (!query.data) return undefined;
-    if (!expanded || expanded.key !== filterKey) return query.data;
-    return mergeKnowledgeGraphs(query.data, expanded.graph);
-  }, [expanded, filterKey, query.data]);
+    if (!currentExpansion.graph) return query.data;
+    return mergeKnowledgeGraphs(query.data, currentExpansion.graph);
+  }, [currentExpansion.graph, query.data]);
 
-  const expandNode = useCallback(
-    async (nodeId: string) => {
-      if (request.view === "hierarchy") return undefined;
-      setExpandingNodeId(nodeId);
-      try {
-        const incoming = await queryClient.fetchQuery({
-          queryKey: ["knowledge-graph-neighbors", nodeId, 15, 1],
-          queryFn: () => getNodeNeighbors(nodeId),
-          staleTime: GRAPH_QUERY_STALE_TIME_MS,
-          gcTime: GRAPH_QUERY_GC_TIME_MS,
-        });
-        setExpanded((current) => ({
-          key: filterKey,
-          graph:
-            current?.key === filterKey
-              ? mergeKnowledgeGraphs(current.graph, incoming)
-              : incoming,
-        }));
-        return incoming;
-      } finally {
-        setExpandingNodeId(null);
+  async function expandNode(nodeId: string) {
+    if (request.view === "hierarchy" || activeScope.current !== scope || scope.pending.has(nodeId)) return;
+    scope.pending.add(nodeId);
+    const pendingNodeIds = new Set(scope.pending);
+    setExpansion((current) => ({ ...forScope(current, scope), pendingNodeIds, error: undefined }));
+    try {
+      const incoming = await queryClient.fetchQuery({
+        queryKey: ["knowledge-graph-neighbors", nodeId, filters],
+        queryFn: () => getNodeNeighbors(nodeId, 15, 1, filters),
+        staleTime: GRAPH_QUERY_STALE_TIME_MS,
+        gcTime: GRAPH_QUERY_GC_TIME_MS,
+      });
+      if (activeScope.current !== scope) return;
+      setExpansion((current) => {
+        const expanded = forScope(current, scope);
+        return {
+          ...expanded,
+          graph: expanded.graph ? mergeKnowledgeGraphs(expanded.graph, incoming) : incoming,
+        };
+      });
+      return incoming;
+    } catch (error) {
+      if (activeScope.current === scope) {
+        setExpansion((current) => ({ ...forScope(current, scope), error }));
       }
-    },
-    [filterKey, queryClient, request.view],
-  );
+    } finally {
+      scope.pending.delete(nodeId);
+      const remaining = new Set(scope.pending);
+      if (activeScope.current === scope) {
+        setExpansion((current) => ({ ...forScope(current, scope), pendingNodeIds: remaining }));
+      }
+    }
+  }
 
-  return { ...query, graph, expandNode, expandingNodeId };
+  function resetExpansion() {
+    activeScope.current = null;
+    setExpansion(null);
+    setResetGeneration((value) => value + 1);
+  }
+
+  return {
+    ...query,
+    graph,
+    expandNode,
+    resetExpansion,
+    expandingNodeIds: currentExpansion.pendingNodeIds,
+    expansionError: currentExpansion.error,
+  };
 }

@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
+import type { DocumentGraphNode } from "../lib/types";
 
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/v1/auth/config", (route) => route.fulfill({
@@ -53,6 +54,37 @@ const uploaded = {
   created_at: "2026-07-18T00:00:00Z",
   updated_at: "2026-07-18T00:00:00Z",
 };
+
+function auditClaim(id: string, label: string): DocumentGraphNode {
+  return {
+    id, label, node_type: "claim", summary: `Grounded summary of ${label}`,
+    parent_node_id: null, confidence: .9, evidence_status: "supported", evidence: [],
+  };
+}
+
+function auditDocumentGraph(nodes: DocumentGraphNode[]) {
+  return { workspace_id: "workspace", nodes, edges: [], meta: { node_count: nodes.length } };
+}
+
+async function mockDocumentGraph(page: Page, handlers: {
+  graph: (route: Route) => Promise<void>;
+  workspace?: (route: Route) => Promise<void>;
+  research?: (route: Route) => Promise<void>;
+}) {
+  await page.route("**/api/v1/documents/workspace**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/graph/research") && handlers.research) return handlers.research(route);
+    if (path.endsWith("/graph")) return handlers.graph(route);
+    if (path.endsWith("/content")) return route.fulfill({ json: {
+      workspace_id: "workspace", filename: uploaded.filename, format: "md",
+      preview_kind: "markdown", source_text: "# Audit fixture", extracted_text: "Audit fixture",
+      supports_raw: true, source_truncated: false, editable: false, source_version: 2,
+    } });
+    return handlers.workspace?.(route) ?? route.fulfill({ json: {
+      ...uploaded, processing_status: "needs_review", graph_node_count: 2,
+    } });
+  });
+}
 
 test("uploaded PDF opens its editor from the uploaded-document list", async ({ page }) => {
   const source = "Agent memory\n\nHuman review remains required.";
@@ -366,7 +398,7 @@ test("editable import and document brainstorm stay explicit and responsive", asy
   expect(dimensions.content).toBeLessThanOrEqual(dimensions.viewport);
 });
 
-test("processed document exposes paper fit, graph and evidence", async ({ page }) => {
+test("processed document exposes paper fit, graph and evidence", async ({ page }, testInfo) => {
   const processed = {
     ...uploaded,
     processing_status: "needs_review",
@@ -414,7 +446,38 @@ test("processed document exposes paper fit, graph and evidence", async ({ page }
 
   await page.goto("/documents/workspace");
   await expect(page.getByText("77.75")).toBeVisible();
-  await page.getByRole("button", { name: "Human approval improves reliability" }).press("Enter");
+  const node = page.getByRole("button", { name: "Human approval improves reliability", exact: true });
+  await node.evaluate((element) => element.scrollIntoView({ block: "center", inline: "center" }));
+  const initial = (await node.getAttribute("transform"))!;
+  const card = node.locator("rect").first();
+  const box = (await card.boundingBox())!;
+  const x = Math.round(box.x + box.width / 2);
+  const y = Math.round(box.y + box.height / 2);
+
+  await node.dispatchEvent("pointerdown", { pointerId: 99, button: 0, clientX: x, clientY: y });
+  await node.dispatchEvent("pointermove", { pointerId: 99, clientX: x, clientY: y - 20 });
+  await expect(node).toHaveClass(/dragging/);
+  await node.dispatchEvent("pointercancel", { pointerId: 99 });
+  await expect(node).toHaveAttribute("transform", initial);
+  await node.dispatchEvent("click");
+  await expect(node).toHaveClass(/selected/);
+
+  if (testInfo.project.use.hasTouch) {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: 5 }] });
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await cdp.detach();
+  } else {
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x, 5, { steps: 6 });
+    await page.mouse.up();
+  }
+  await expect(node).toHaveAttribute("transform", "translate(520, 28)");
+  await page.getByRole("button", { name: "Sắp xếp lại", exact: true }).click();
+  await expect(node).toHaveAttribute("transform", initial);
+  await node.press("Enter");
   await expect(page.getByText("Human approval improves reliability.")).toBeVisible();
 
   const dimensions = await page.evaluate(() => ({
@@ -422,6 +485,99 @@ test("processed document exposes paper fit, graph and evidence", async ({ page }
     content: document.documentElement.scrollWidth,
   }));
   expect(dimensions.content).toBeLessThanOrEqual(dimensions.viewport);
+});
+
+test("late AI node research keeps the current selection and preserves pending requests", async ({ page }) => {
+  const nodes = [auditClaim("alpha", "Alpha finding"), auditClaim("beta", "Beta finding")];
+  const pending = new Map<string, () => void>();
+  const requests: string[] = [];
+  let graphReads = 0;
+  await mockDocumentGraph(page, {
+    graph: (route) => {
+      graphReads += 1;
+      return route.fulfill({ json: auditDocumentGraph(nodes) });
+    },
+    research: async (route) => {
+      const nodeId: string = route.request().postDataJSON().node_ids[0];
+      requests.push(nodeId);
+      await new Promise<void>((resolve) => pending.set(nodeId, resolve));
+      const node = nodes.find((claim) => claim.id === nodeId)!;
+      node.ai_research = {
+        research_summary: `Independent result for ${node.label}`, comparison_status: "consistent",
+        difference_summary: "", confidence: .95, provider_name: "fixture", model_name: "fixture",
+        prompt_version: "v1", researched_at: "2026-11-20T00:00:00Z",
+      };
+      await route.fulfill({ json: { graph: auditDocumentGraph(nodes), change_set: null } });
+    },
+  });
+  await page.goto("/documents/workspace");
+  const alpha = page.getByRole("button", { name: "Alpha finding", exact: true });
+  const beta = page.getByRole("button", { name: "Beta finding", exact: true });
+  const research = page.getByRole("button", { name: "Cho AI tìm hiểu nút này", exact: true });
+  const busy = page.getByRole("button", { name: "AI đang tìm hiểu…", exact: true });
+
+  await alpha.click();
+  await research.click();
+  await expect.poll(() => requests).toEqual(["alpha"]);
+  await beta.click();
+  await research.click();
+  await expect.poll(() => requests).toEqual(["alpha", "beta"]);
+  await alpha.click();
+  await expect(busy).toBeDisabled();
+  await beta.click();
+  const beforeRefresh = graphReads;
+  pending.get("alpha")!();
+  await expect.poll(() => graphReads).toBeGreaterThan(beforeRefresh);
+  await expect(beta).toHaveClass(/selected/);
+  await expect(busy).toBeDisabled();
+  await expect(page.getByText("Independent result for Alpha finding")).toHaveCount(0);
+  pending.get("beta")!();
+  await expect(page.getByText("Independent result for Beta finding")).toBeVisible();
+  await expect(research).toBeEnabled();
+  await alpha.click();
+  await expect(page.getByText("Independent result for Alpha finding")).toBeVisible();
+  expect(requests).toEqual(["alpha", "beta"]);
+});
+
+test("the document graph waits for the new source and offers retry for a load failure", async ({ page }) => {
+  let graphReads = 0;
+  let workspaceReads = 0;
+  let graphAvailable = false;
+  let finishProcessing!: () => void;
+  const processing = new Promise<void>((resolve) => { finishProcessing = resolve; });
+  await mockDocumentGraph(page, {
+    workspace: async (route) => {
+      const first = workspaceReads++ === 0;
+      if (!first) await processing;
+      await route.fulfill({ json: {
+        ...uploaded, source_version: 2, graph_node_count: 2,
+        finished_at: first ? null : "2026-11-20T00:00:00Z",
+        processing_status: first ? "uploaded" : "needs_review",
+      } });
+    },
+    graph: async (route) => {
+      graphReads += 1;
+      if (!graphAvailable) {
+        await route.fulfill({ status: 503, json: { detail: "Graph temporarily unavailable" } });
+        return;
+      }
+      await route.fulfill({ json: auditDocumentGraph([
+        auditClaim("v2-a", "New source claim"), auditClaim("v2-b", "New evidence"),
+      ]) });
+    },
+  });
+  await page.goto("/documents/workspace");
+  const panel = page.locator("#document-analysis");
+  await expect(panel.getByText("Đồ thị tài liệu đang được xử lý.")).toBeVisible();
+  await expect.poll(() => workspaceReads).toBeGreaterThan(1);
+  expect(graphReads).toBe(0);
+  finishProcessing();
+  await expect(panel.getByRole("alert")).toHaveText("Không thể tải đồ thị tài liệu.");
+  expect(graphReads).toBeGreaterThan(1);
+  graphAvailable = true;
+  await panel.getByRole("button", { name: "Thử lại", exact: true }).click();
+  await expect(panel.getByRole("button", { name: "New source claim", exact: true })).toBeVisible();
+  await expect(panel.getByRole("alert")).toHaveCount(0);
 });
 
 test("LaTeX CV preview compiles and embeds a PDF", async ({ page }) => {

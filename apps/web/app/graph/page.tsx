@@ -15,8 +15,9 @@ import { useI18n } from "@/lib/i18n";
 import {
   buildGraphPresentation,
   collapseDenseHierarchyLeaves,
+  excludeGraphNodes,
   graphClusterCount,
-  isHierarchyEdgeType,
+  isHierarchyTreeEdge,
   mergeHierarchyRelationshipOverlay,
 } from "@/lib/knowledge-graph/graph-visualization";
 import type {
@@ -24,10 +25,6 @@ import type {
   GraphLayoutMode,
   GraphView,
 } from "@/lib/knowledge-graph/types";
-
-// Render the complete current local corpus in both layouts. The API retains the explicit
-// 1,000-node operational ceiling; there is no longer a product-level 100-node display cap.
-const GRAPH_DISPLAY_LIMIT = 1000;
 
 export default function KnowledgeGraphPage() {
   const { t } = useI18n();
@@ -39,24 +36,37 @@ export default function KnowledgeGraphPage() {
   const [hiddenNodeIds, setHiddenNodeIds] = useState<Set<string>>(new Set());
   const [layoutNonce, setLayoutNonce] = useState(0);
   const [fitNonce, setFitNonce] = useState(0);
-  const [actionError, setActionError] = useState("");
   const [showExplorer, setShowExplorer] = useState(false);
   const [showLabels, setShowLabels] = useState(true);
   const [expandedLeafParentIds, setExpandedLeafParentIds] = useState<Set<string>>(new Set());
   const activeRootId = focusId;
-  const baseLimit = GRAPH_DISPLAY_LIMIT;
-  const graphQuery = useKnowledgeGraph(filters, {
+  const activeFilters = useMemo(() => view === "hierarchy" ? {
+    ...filters,
+    sourceTypes: [],
+    minConfidence: 0,
+    dateFrom: "",
+    dateTo: "",
+  } : filters, [filters, view]);
+  const hasFilters = Boolean(activeFilters.query.trim() || activeFilters.nodeTypes.length ||
+    activeFilters.sourceTypes.length || activeFilters.minConfidence ||
+    activeFilters.dateFrom || activeFilters.dateTo);
+  const filterCatalog = useKnowledgeGraph(defaultGraphFilters, {
+    view: "relationship",
+    full: true,
+    enabled: showExplorer && hasFilters,
+  });
+  const graphQuery = useKnowledgeGraph(activeFilters, {
     view,
     rootNodeId: view === "hierarchy" ? activeRootId : undefined,
     depth: 1,
-    limit: baseLimit,
+    full: true,
     enabled: true,
   });
   // The hierarchy API deliberately returns only parent/child edges. Load the accepted relationship
   // projection beside it so visible cards can retain their real semantic connections.
-  const hierarchyRelationshipQuery = useKnowledgeGraph(filters, {
+  const hierarchyRelationshipQuery = useKnowledgeGraph(activeFilters, {
     view: "relationship",
-    limit: baseLimit,
+    full: true,
     enabled: view === "hierarchy",
   });
   const selection = useGraphSelection();
@@ -73,7 +83,6 @@ export default function KnowledgeGraphPage() {
         ...base,
         hiddenLeafCount: 0,
         collapsedParentCount: 0,
-        semanticEdgeCount: 0,
       };
     }
     const progressive = collapseDenseHierarchyLeaves(base.graph, expandedLeafParentIds);
@@ -86,7 +95,6 @@ export default function KnowledgeGraphPage() {
       graph: overlaid.graph,
       hiddenLeafCount: progressive.hiddenLeafCount,
       collapsedParentCount: progressive.collapsedParentCount,
-      semanticEdgeCount: overlaid.semanticEdgeCount,
     };
   }, [
     activeRootId,
@@ -98,18 +106,10 @@ export default function KnowledgeGraphPage() {
   ]);
   const graph = useMemo(() => {
     if (!presentation) return undefined;
-    const nodes = presentation.graph.nodes
-      .filter((node) => !hiddenNodeIds.has(node.id))
-      .map((node) => ({ ...node, expanded_group: false }));
-    const ids = new Set(nodes.map((node) => node.id));
-    const edges = presentation.graph.edges.filter(
-      (edge) => ids.has(edge.source) && ids.has(edge.target),
-    );
+    const visible = excludeGraphNodes(presentation.graph, hiddenNodeIds);
     return {
-      ...presentation.graph,
-      nodes,
-      edges,
-      meta: { ...presentation.graph.meta, node_count: nodes.length, edge_count: edges.length },
+      ...visible,
+      nodes: visible.nodes.map((node) => ({ ...node, expanded_group: false })),
     };
   }, [
     hiddenNodeIds,
@@ -117,7 +117,6 @@ export default function KnowledgeGraphPage() {
   ]);
   const unplacedNodeCount = presentation?.unplacedNodeCount ?? 0;
   const hiddenLeafCount = presentation?.hiddenLeafCount ?? 0;
-  const semanticEdgeCount = presentation?.semanticEdgeCount ?? 0;
 
   const nodeById = useMemo(
     () => new Map(graph?.nodes.map((node) => [node.id, node]) ?? []),
@@ -131,11 +130,13 @@ export default function KnowledgeGraphPage() {
   const corpusGraph = view === "hierarchy"
     ? hierarchyRelationshipQuery.graph
     : graphQuery.graph;
-  const corpusCounts = useMemo(() => {
-    const values: Record<string, number> = {};
-    corpusGraph?.nodes.forEach((node) => { values[node.type] = (values[node.type] ?? 0) + 1; });
-    return values;
-  }, [corpusGraph?.nodes]);
+  const filterNodeTypes = useMemo(() => {
+    const types = new Set(filters.nodeTypes);
+    filterCatalog.graph?.nodes.forEach((node) => types.add(node.type));
+    corpusGraph?.nodes.forEach((node) => types.add(node.type));
+    graph?.nodes.forEach((node) => types.add(node.type));
+    return [...types].sort();
+  }, [corpusGraph?.nodes, filterCatalog.graph?.nodes, filters.nodeTypes, graph?.nodes]);
   const clusterCount = useMemo(
     () => corpusGraph ? graphClusterCount(corpusGraph) : 0,
     [corpusGraph],
@@ -144,32 +145,32 @@ export default function KnowledgeGraphPage() {
     .filter((node) => node.type === "Concept")
     .sort((left, right) => right.degree - left.degree)
     .slice(0, 6) ?? [] : [];
-  const selectedNode = selection.selection?.kind === "node" ? selection.selection.value : null;
-  const selectedEdge = selection.selection?.kind === "edge" ? selection.selection.value : null;
-  const selectedNodeInCurrentView = Boolean(selectedNode && nodeById.has(selectedNode.id));
+  const selectedNode = selection.selection?.kind === "node"
+    ? nodeById.get(selection.selection.value.id) : undefined;
+  const selectedEdgeId = selection.selection?.kind === "edge" ? selection.selection.value.id : null;
+  const selectedEdge = graph?.edges.find((edge) => edge.id === selectedEdgeId);
   const relationships = selectedNode
     ? graph?.edges.filter(
         (edge) => edge.source === selectedNode.id || edge.target === selectedNode.id,
       ) ?? []
     : [];
   const relatedEvidence = selectedEdge?.evidence ?? relationships.flatMap((edge) => edge.evidence);
-  const structuralEdgeCount = graph?.edges.filter((edge) => isHierarchyEdgeType(edge.type)).length ?? 0;
+  const treeEdges = view === "hierarchy" ? graph?.edges.filter(isHierarchyTreeEdge) : undefined;
+  const structuralEdgeCount = treeEdges?.length ?? 0;
+  const semanticEdgeCount = view === "hierarchy" ? (graph?.edges.length ?? 0) - structuralEdgeCount : 0;
+  const treeChildren = new Set(treeEdges?.map((edge) => edge.target));
   // Metrics describe what is on screen. The wider totals are shown beside them rather
   // than in their place, so the header can never claim more than the canvas is drawing.
   const visibleMetrics = {
     nodes: graph?.nodes.length ?? 0,
     edges: graph?.edges.length ?? 0,
     clusters: view === "hierarchy"
-      ? graph?.nodes.filter((node) => !graph.edges.some((edge) => edge.target === node.id)).length ?? 0
+      ? graph?.nodes.filter((node) => !treeChildren.has(node.id)).length ?? 0
       : clusterCount,
   };
   const totalMetrics = {
-    nodes: view === "hierarchy"
-      ? graph?.meta.total_node_count ?? visibleMetrics.nodes
-      : graph?.meta.total_node_count ?? visibleMetrics.nodes,
-    edges: view === "hierarchy"
-      ? graph?.meta.total_edge_count ?? visibleMetrics.edges
-      : graph?.meta.total_edge_count ?? visibleMetrics.edges,
+    nodes: graph?.meta.total_node_count ?? visibleMetrics.nodes,
+    edges: graph?.meta.total_edge_count ?? visibleMetrics.edges,
   };
   // A focus node drawn on its own means the branch is real but has nothing in it yet.
   // Ten of the eleven pillars were in exactly this state and rendered as a blank canvas.
@@ -188,31 +189,29 @@ export default function KnowledgeGraphPage() {
   }), [t]);
   const loadError = graphQuery.error;
   const loading = graphQuery.isLoading;
+  const overlayError = view === "hierarchy" && hierarchyRelationshipQuery.error;
+  const overlayLoading = view === "hierarchy" && hierarchyRelationshipQuery.isLoading;
+  const semanticMetric = overlayError || overlayLoading ? "—" : semanticEdgeCount;
+  const actionError = graphQuery.expansionError;
 
-  async function expandNode(nodeId: string) {
-    setActionError("");
-    try {
-      await graphQuery.expandNode(nodeId);
-    } catch (reason) {
-      setActionError(reason instanceof Error ? reason.message : t("graphExpandFailed"));
-    }
+  function replaceFilters(next: FilterState) {
+    setFilters(next);
+    graphQuery.resetExpansion();
+    selection.clearSelection();
+    setFocusId(undefined);
+    setExpandedLeafParentIds(new Set());
   }
 
   function resetGraph() {
-    setFilters({ ...defaultGraphFilters });
+    replaceFilters({ ...defaultGraphFilters });
     setHiddenNodeIds(new Set());
-    selection.clearSelection();
-    setActionError("");
-    setFocusId(undefined);
     setShowExplorer(false);
     setShowLabels(true);
-    setExpandedLeafParentIds(new Set());
   }
 
   /** Redraw the hierarchy around `nodeId`, which becomes the new breadcrumb tail. */
   function focusNode(nodeId: string | undefined) {
     setFocusId(nodeId);
-    setActionError("");
     setLayoutNonce((value) => value + 1);
   }
 
@@ -267,7 +266,7 @@ export default function KnowledgeGraphPage() {
             )}
           </span>
           <span>
-            <strong>{view === "hierarchy" ? semanticEdgeCount : visibleMetrics.clusters}</strong>
+            <strong>{view === "hierarchy" ? semanticMetric : visibleMetrics.clusters}</strong>
             {view === "hierarchy" ? t("semanticLinks") : t("clusters")}
           </span>
         </div>
@@ -280,7 +279,7 @@ export default function KnowledgeGraphPage() {
           setLayout(nextLayout);
           setLayoutNonce((value) => value + 1);
         }}
-        onSearch={(query) => setFilters({ ...filters, query })}
+        onSearch={(query) => replaceFilters({ ...filters, query })}
         onFit={() => setFitNonce((value) => value + 1)}
         onReset={resetGraph}
         onRelayout={() => setLayoutNonce((value) => value + 1)}
@@ -308,10 +307,22 @@ export default function KnowledgeGraphPage() {
           {t("graphTruncatedCount")
             .replace("{shown}", String(visibleMetrics.nodes))
             .replace("{total}", String(graph.meta.total_node_count ?? visibleMetrics.nodes))}
-          {hiddenNodeCount > 0 && <span>{t("graphOperationalLimit")}</span>}
+          {hiddenNodeCount > 0 && graph.meta.node_limit != null && (
+            <span>{t("graphOperationalLimit").replace("{limit}", graph.meta.node_limit.toLocaleString("vi-VN"))}</span>
+          )}
         </p>
       )}
-      {actionError && <p className="error">{actionError}</p>}
+      {actionError != null && (
+        <p className="error" role="alert">
+          {actionError instanceof Error ? actionError.message : t("graphExpandFailed")}
+        </p>
+      )}
+      {overlayError && !loadError && (
+        <div className="graph-warning" role="status">
+          <span>{t("graphRelationsLoadFailed")} </span>
+          <button type="button" onClick={() => hierarchyRelationshipQuery.refetch()}>{t("retry")}</button>
+        </div>
+      )}
       {/* Selection is otherwise a purely visual event, invisible to a screen reader. */}
       <p className="visually-hidden" role="status" aria-live="polite">
         {selectedNode
@@ -326,7 +337,7 @@ export default function KnowledgeGraphPage() {
             <section className="card topic-panel">
               <h3>{t("topics")}</h3>
               {topics.map((topic) => (
-                <button key={topic.id} onClick={() => setFilters({ ...filters, query: topic.label })}>
+                <button key={topic.id} onClick={() => replaceFilters({ ...filters, query: topic.label })}>
                   <span>{topic.label}</span><strong>{topic.degree}</strong>
                 </button>
               ))}
@@ -334,9 +345,9 @@ export default function KnowledgeGraphPage() {
           )}
           <GraphFilters
             filters={filters}
-            nodeTypes={Object.keys(corpusCounts).length > 0 ? Object.keys(corpusCounts) : Object.keys(counts)}
+            nodeTypes={filterNodeTypes}
             view={view}
-            onChange={setFilters}
+            onChange={replaceFilters}
             labels={{
               filters: t("filters"),
               nodeTypes: t("nodeTypes"),
@@ -382,10 +393,12 @@ export default function KnowledgeGraphPage() {
               fitNonce={fitNonce}
               layout={layout}
               labelsVisible={showLabels}
+              selectedNodeId={selectedNode?.id ?? null}
+              selectedEdgeId={selectedEdge?.id ?? null}
               onNodeSelect={selection.selectNode}
               onEdgeSelect={selection.selectEdge}
               onClearSelection={selection.clearSelection}
-              onExpandNode={view === "hierarchy" ? openNode : expandNode}
+              onExpandNode={view === "hierarchy" ? openNode : graphQuery.expandNode}
               hierarchyLabels={hierarchyLabels}
               status={{
                 nodes: `${visibleMetrics.nodes} ${t("nodes")}`,
@@ -394,7 +407,7 @@ export default function KnowledgeGraphPage() {
                   : `${visibleMetrics.edges} ${t("edges")}`,
                 detail: view === "hierarchy"
                   ? [
-                      `${semanticEdgeCount} ${t("semanticLinks")}`,
+                      `${semanticMetric} ${t("semanticLinks")}`,
                       hiddenLeafCount > 0 ? `${hiddenLeafCount} ${t("hiddenLeaves")}` : "",
                       unplacedNodeCount > 0 ? `${unplacedNodeCount} ${t("unplaced")}` : "",
                     ].filter(Boolean).join(" · ")
@@ -410,13 +423,13 @@ export default function KnowledgeGraphPage() {
               node={selectedNode}
               relationships={relationships}
               childNodes={relationships
-                .filter((edge) => edge.type === "PARENT_OF" && edge.source === selectedNode.id)
+                .filter((edge) => isHierarchyTreeEdge(edge) && edge.source === selectedNode.id)
                 .map((edge) => nodeById.get(edge.target))
                 .filter((node): node is NonNullable<typeof node> => Boolean(node))}
               view={view}
-              inCurrentView={selectedNodeInCurrentView}
-              expanding={graphQuery.expandingNodeId === selectedNode.id}
-              onExpand={() => expandNode(selectedNode.id)}
+              inCurrentView
+              expanding={graphQuery.expandingNodeIds.has(selectedNode.id)}
+              onExpand={() => graphQuery.expandNode(selectedNode.id)}
               onBrowseNode={openNode}
               onHide={() => {
                 setHiddenNodeIds((current) => new Set(current).add(selectedNode.id));

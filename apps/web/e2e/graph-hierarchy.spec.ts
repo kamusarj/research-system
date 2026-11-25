@@ -140,7 +140,10 @@ test("research graph uses progressive hierarchy and focused relationships", asyn
   ).toBe(2);
   expect(graphRequests.filter((request) => request.includes("/graph/stats"))).toHaveLength(0);
   await expect(page.locator(".d3-hierarchy-card")).toHaveCount(5);
+  await expect(page.locator(".d3-hierarchy-edge").first()).toHaveAttribute("marker-end", "url(#arrowhead)");
+  await expect(page.locator(".d3-hierarchy-edge").first()).not.toHaveCSS("stroke", "none");
   await expect(page.locator(".d3-hierarchy-relation-edge")).toHaveCount(4);
+  await expect(page.locator(".d3-hierarchy-relation-edge").first()).not.toHaveCSS("stroke", "none");
   await expect(page.locator(".graph-structure-note")).toHaveCount(0);
   await expect(page.locator('.d3-node[data-node-id="concept:memory"] .d3-hierarchy-leaf-action')).toContainText("+8 đang ẩn");
   await expect(page.locator(".graph-canvas-guide")).toHaveCount(0);
@@ -148,6 +151,18 @@ test("research graph uses progressive hierarchy and focused relationships", asyn
   await expect(page.locator(".graph-canvas-status")).toContainText("1 chưa xếp");
   await expect(page.getByText(/Scroll to zoom/i)).toHaveCount(0);
   await expect(page.locator('.d3-node[data-node-id="concept:unplaced"]')).toHaveCount(0);
+  const labelToggle = page.getByRole("button", { name: "Nhãn", exact: true });
+  const memoryNode = page.locator('.d3-node[data-node-id="concept:memory"]');
+  await page.getByRole("button", { name: "Phóng to", exact: true }).click();
+  await expect.poll(() => page.locator(".d3-graph-svg").evaluate((svg) => "__transition" in svg)).toBe(false);
+  const initialCamera = await page.locator(".d3-graph-container").getAttribute("transform");
+  await labelToggle.click();
+  await expect(memoryNode.locator(".d3-node-label")).toHaveCSS("opacity", "0");
+  await expect(memoryNode.locator(".d3-hierarchy-type")).toHaveCSS("opacity", "0");
+  await expect(memoryNode.locator(".d3-hierarchy-leaf-action")).toBeVisible();
+  await expect(page.locator(".d3-graph-container")).toHaveAttribute("transform", initialCamera!);
+  await labelToggle.click();
+  await expect(memoryNode.locator(".d3-node-label")).toHaveCSS("opacity", "1");
   const lightChrome = await page.evaluate(() => {
     const studio = document.querySelector<HTMLElement>(".graph-studio");
     const canvas = document.querySelector<HTMLElement>(".graph-studio .d3-canvas");
@@ -199,6 +214,9 @@ test("research graph uses progressive hierarchy and focused relationships", asyn
 
   await page.getByRole("button", { name: "Mạng" }).click();
   await expect(page.locator(".d3-node")).toHaveCount(14);
+  await expect(page.getByTestId("node-details")).toContainText("Agent memory");
+  await page.locator(".d3-graph-svg").dispatchEvent("click");
+  await expect(page.getByTestId("node-details")).toHaveCount(0);
   expect(graphRequests.filter((request) => request.split("?")[0].endsWith("/graph"))).toHaveLength(2);
   await expect(page.getByText("Explore clustered knowledge")).toHaveCount(0);
   await expect(page.locator(".graph-canvas-status")).toContainText("cụm");
@@ -222,18 +240,20 @@ test("research graph uses progressive hierarchy and focused relationships", asyn
   expect(communityLabelLayer.paintOrder).toContain("stroke");
   expect(communityLabelLayer.pointerEvents).toBe("none");
   expect(communityLabelLayer.strokeWidth).toBeGreaterThanOrEqual(3);
-  await expect(page.locator('.d3-node[data-node-id="concept:memory"] circle').first()).toHaveAttribute("r", "9.8");
-  await expect(page.locator(".d3-network-edge").first()).toHaveCSS("opacity", "0.08");
+  await expect(page.locator('.d3-node[data-node-id="concept:memory"] .d3-node-card').first()).toHaveAttribute("rx", "10");
+  await expect(page.locator(".d3-network-edge").first()).not.toHaveCSS("stroke", "none");
+  await expect(page.locator(".d3-network-edge").first()).toHaveCSS("opacity", "0.3");
   await expect(page.locator(".d3-network-edge").first()).toHaveCSS("stroke-dasharray", "3px, 7px");
+  // Weave contract: the label lives inside the card, so it stays visible at rest too.
   const restingVisibleLabels = await page.locator(".d3-node-label").evaluateAll((labels) =>
     labels.filter((label) => getComputedStyle(label).opacity !== "0").length,
   );
-  expect(restingVisibleLabels).toBe(0);
+  expect(restingVisibleLabels).toBe(14);
   await expect(page.locator(".d3-node-type-label")).toHaveCount(14);
   const restingVisibleTypes = await page.locator(".d3-node-type-label").evaluateAll((labels) =>
     labels.filter((label) => getComputedStyle(label).opacity !== "0").length,
   );
-  expect(restingVisibleTypes).toBe(0);
+  expect(restingVisibleTypes).toBe(14);
 
   await page.locator('.d3-node[data-node-id="concept:memory"]').hover();
   await expect(page.locator(".d3-graph-svg")).not.toHaveClass(/d3-relationship-focused/);
@@ -249,11 +269,11 @@ test("research graph uses progressive hierarchy and focused relationships", asyn
   const hoveredVisibleLabels = await page.locator(".d3-node-label").evaluateAll((labels) =>
     labels.filter((label) => getComputedStyle(label).opacity !== "0").length,
   );
-  expect(hoveredVisibleLabels).toBe(1);
+  expect(hoveredVisibleLabels).toBe(14);
   const hoveredVisibleTypes = await page.locator(".d3-node-type-label").evaluateAll((labels) =>
     labels.filter((label) => getComputedStyle(label).opacity !== "0").length,
   );
-  expect(hoveredVisibleTypes).toBe(1);
+  expect(hoveredVisibleTypes).toBe(14);
   const hoverTransitionOwners = await page.locator(".d3-node, .d3-edge").evaluateAll((elements) =>
     elements.filter((element) => "__transition" in element).length,
   );
@@ -261,15 +281,24 @@ test("research graph uses progressive hierarchy and focused relationships", asyn
 
   await page.locator(".graph-toolbar").hover();
   await expect(page.locator(".d3-network-edge.d3-hover-edge")).toHaveCount(0);
-  await expect(page.locator(".d3-network-edge").first()).toHaveCSS("opacity", "0.08");
+  await expect(page.locator(".d3-network-edge").first()).toHaveCSS("opacity", "0.3");
   const restoredVisibleLabels = await page.locator(".d3-node-label").evaluateAll((labels) =>
     labels.filter((label) => getComputedStyle(label).opacity !== "0").length,
   );
-  expect(restoredVisibleLabels).toBe(0);
+  expect(restoredVisibleLabels).toBe(14);
   const restoredVisibleTypes = await page.locator(".d3-node-type-label").evaluateAll((labels) =>
     labels.filter((label) => getComputedStyle(label).opacity !== "0").length,
   );
-  expect(restoredVisibleTypes).toBe(0);
+  expect(restoredVisibleTypes).toBe(14);
+
+  await labelToggle.click();
+  await expect(labelToggle).toHaveAttribute("aria-pressed", "false");
+  await memoryNode.hover();
+  await expect(memoryNode).toHaveClass(/d3-node-hovered/);
+  await expect(memoryNode.locator(".d3-node-label")).toHaveCSS("opacity", "0");
+  await expect(memoryNode.locator(".d3-node-type-label")).toHaveCSS("opacity", "0");
+  await labelToggle.click();
+  await expect(memoryNode.locator(".d3-node-label")).toHaveCSS("opacity", "1");
 
   await page.locator('.d3-node[data-node-id="concept:memory"]').click();
   await expect(page.locator(".d3-graph-svg")).toHaveClass(/d3-relationship-focused/);
@@ -280,11 +309,20 @@ test("research graph uses progressive hierarchy and focused relationships", asyn
   const selectedVisibleLabels = await page.locator(".d3-node-label").evaluateAll((labels) =>
     labels.filter((label) => getComputedStyle(label).opacity !== "0").length,
   );
-  expect(selectedVisibleLabels).toBe(0);
+  expect(selectedVisibleLabels).toBe(14);
   const selectedVisibleTypes = await page.locator(".d3-node-type-label").evaluateAll((labels) =>
     labels.filter((label) => getComputedStyle(label).opacity !== "0").length,
   );
-  expect(selectedVisibleTypes).toBe(0);
+  expect(selectedVisibleTypes).toBe(14);
+
+  const keyboardEdge = page.locator('.d3-network-edge[tabindex="0"]');
+  const nextEdge = page.locator('[data-edge-id="relationship:memory-research-2"]');
+  await expect(keyboardEdge).toHaveCount(1);
+  await keyboardEdge.press("ArrowDown");
+  await expect(nextEdge).toBeFocused();
+  await expect(nextEdge).toHaveAttribute("tabindex", "0");
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("edge-details")).toContainText("Agent memory → Memory evidence 2");
 
   await page.getByRole("button", { name: "Quỹ đạo" }).click();
   await expect(page.locator(".d3-orbit-ring")).toHaveCount(4);

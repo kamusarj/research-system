@@ -1,4 +1,5 @@
 import type { GraphEdge, GraphNode } from "./types";
+import { isHierarchyEdgeType, isHierarchyTreeEdge } from "./graph-visualization";
 
 export type HierarchyPosition = {
   x: number;
@@ -7,8 +8,6 @@ export type HierarchyPosition = {
   width?: number;
   height?: number;
 };
-
-const HIERARCHY_EDGE_TYPES = new Set(["PARENT_OF", "BROADER_THAN"]);
 
 export function buildHierarchyLayout(
   nodes: GraphNode[],
@@ -24,7 +23,7 @@ export function buildHierarchyLayout(
 
   edges.forEach((edge) => {
     if (
-      !HIERARCHY_EDGE_TYPES.has(edge.type) ||
+      !isHierarchyTreeEdge(edge) ||
       !nodeById.has(edge.source) ||
       !nodeById.has(edge.target)
     ) {
@@ -49,8 +48,12 @@ export function buildHierarchyLayout(
   const openedBoard = nodes.find(
     (node) => node.type === "SystemPillar" && node.expanded_group,
   );
-  if (openedBoard && (children.get(openedBoard.id)?.length ?? 0) > 0) {
-    const boardChildren = [...(children.get(openedBoard.id) ?? [])].sort(byLabel);
+  // The system map lists every structural child of the opened pillar. Other views
+  // still place each node under its single display parent.
+  const boardChildren = openedBoard ? [...new Set(edges
+    .filter((edge) => edge.source === openedBoard.id && isHierarchyEdgeType(edge.type) && nodeById.has(edge.target))
+    .map((edge) => edge.target))].sort(byLabel) : [];
+  if (openedBoard && boardChildren.length > 0) {
     const columns = boardChildren.length > 22 ? 3 : boardChildren.length > 8 ? 2 : 1;
     const rows = Math.ceil(boardChildren.length / columns);
     const childWidth = 156;

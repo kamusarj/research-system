@@ -18,7 +18,7 @@ type Props = {
   view: GraphView;
   inCurrentView: boolean;
   expanding: boolean;
-  onExpand: () => void;
+  onExpand?: () => void;
   onHide: () => void;
   onBrowseNode: (nodeId: string) => void;
 };
@@ -58,7 +58,7 @@ export function NodeDetailsPanel({
           <span className="eyebrow">{graphTypeLabel(node.type)}</span>
         </div>
         <div className="detail-panel-actions">
-          {view === "relationship" && (
+          {view === "relationship" && onExpand && (
             <button
               className="icon-btn"
               onClick={onExpand}

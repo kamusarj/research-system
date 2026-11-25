@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "next/navigation";
 import { DocumentGraphCanvas } from "@/components/document-graph-canvas";
 import { DocumentAIEditor } from "@/components/document-ai-editor";
@@ -26,21 +26,39 @@ export default function DocumentWorkspaceDetail() {
   const { t } = useI18n();
   const { can, user } = useAuth();
   const { id } = useParams<{ id: string }>();
-  const [selected, setSelected] = useState<DocumentGraphNode | null>(null);
+  const queryClient = useQueryClient();
+  const [selection, setSelection] = useState<{ workspaceId: string; nodeId: string } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [creatingChangeSet, setCreatingChangeSet] = useState(false);
-  const [researchingNodeId, setResearchingNodeId] = useState<string | null>(null);
+  const activeNodeResearch = useRef(new Set<string>());
+  const [researchingNodes, setResearchingNodes] = useState<ReadonlySet<string>>(new Set());
+  const [nodeResearchErrors, setNodeResearchErrors] = useState<ReadonlyMap<string, string>>(new Map());
   const [researchingGraph, setResearchingGraph] = useState(false);
   const workspace = useQuery({
     queryKey: ["document-workspace", id],
     queryFn: () => api<DocumentWorkspace>(`/documents/${id}`),
     refetchInterval: (query) => activeStatuses.includes(query.state.data?.processing_status ?? "") ? 2000 : false,
   });
+  const graphProcessing = activeStatuses.includes(workspace.data?.processing_status ?? "");
+  const graphFailed = workspace.data?.processing_status === "failed";
+  const graphQueryKey = [
+    "document-workspace-graph", id, workspace.data?.source_version,
+    workspace.data?.finished_at, workspace.data?.graph_node_count,
+  ] as const;
   const graph = useQuery({
-    queryKey: ["document-workspace-graph", id, workspace.data?.graph_node_count],
-    queryFn: () => api<DocumentGraph>(`/documents/${id}/graph`),
-    enabled: Boolean(workspace.data?.graph_node_count),
+    queryKey: graphQueryKey,
+    queryFn: ({ signal }) => api<DocumentGraph>(`/documents/${id}/graph`, { signal }),
+    enabled: Boolean(workspace.data?.graph_node_count) && !graphProcessing && !graphFailed,
   });
+  const currentGraph = graphProcessing || graphFailed ? undefined : graph.data;
+  const selected = selection?.workspaceId === id
+    ? currentGraph?.nodes.find((node) => node.id === selection.nodeId)
+    : undefined;
+  const researchKey = (nodeId: string) => `${id}:${nodeId}`;
+  const selectedResearchKey = selected ? researchKey(selected.id) : undefined;
+  const selectedResearching = Boolean(selectedResearchKey && researchingNodes.has(selectedResearchKey));
+  const selectedResearchError = selectedResearchKey ? nodeResearchErrors.get(selectedResearchKey) : undefined;
+  const researchingThisWorkspace = [...researchingNodes].some((key) => key.startsWith(`${id}:`));
   const content = useQuery({
     queryKey: ["document-workspace-content", id, workspace.data?.source_version],
     queryFn: () => api<DocumentContent>(`/documents/${id}/content`),
@@ -70,20 +88,30 @@ export default function DocumentWorkspaceDetail() {
   }
 
   async function researchNode(node: DocumentGraphNode) {
-    setResearchingNodeId(node.id);
-    setActionError(null);
+    const key = researchKey(node.id);
+    if (researchingGraph || activeNodeResearch.current.has(key)) return;
+    activeNodeResearch.current.add(key);
+    setResearchingNodes(new Set(activeNodeResearch.current));
+    setNodeResearchErrors((current) => {
+      if (!current.has(key)) return current;
+      const next = new Map(current);
+      next.delete(key);
+      return next;
+    });
     try {
-      const result = await researchDocumentGraph(id, { nodeIds: [node.id] });
-      setSelected(result.graph.nodes.find((item) => item.id === node.id) ?? node);
-      await graph.refetch();
+      await researchDocumentGraph(id, { nodeIds: [node.id] });
+      await queryClient.invalidateQueries({ queryKey: graphQueryKey, exact: true });
     } catch (reason) {
-      setActionError(reason instanceof Error ? reason.message : t("actionFailed"));
+      const message = reason instanceof Error ? reason.message : t("actionFailed");
+      setNodeResearchErrors((current) => new Map(current).set(key, message));
     } finally {
-      setResearchingNodeId(null);
+      activeNodeResearch.current.delete(key);
+      setResearchingNodes(new Set(activeNodeResearch.current));
     }
   }
 
   async function researchGraphAndPrepare() {
+    if (researchingGraph || [...activeNodeResearch.current].some((key) => key.startsWith(`${id}:`))) return;
     setResearchingGraph(true);
     setActionError(null);
     try {
@@ -124,7 +152,7 @@ export default function DocumentWorkspaceDetail() {
         <div className="actions detail-actions">
           {can("researcher") && <Link className="button-link secondary" href={`/chat?scope_type=document&scope_id=${id}`}>{t("brainstormDocument")}</Link>}
           {can("researcher") && item.processing_status === "needs_review" && item.graph_node_count > 0 && (
-            <button onClick={researchGraphAndPrepare} disabled={researchingGraph}>
+            <button onClick={researchGraphAndPrepare} disabled={researchingGraph || researchingThisWorkspace}>
               {researchingGraph ? t("preparingKnowledgeGraph") : t("researchGraphAndPrepare")}
             </button>
           )}
@@ -200,9 +228,17 @@ export default function DocumentWorkspaceDetail() {
 
       <section className="card document-graph-panel" id="document-analysis">
         <div className="section-heading compact"><div><p className="eyebrow">{t("isolatedWorkspace")}</p><h2>{t("documentGraph")}</h2></div></div>
-        {graph.data?.nodes.length ? (
+        {!graphProcessing && graph.isError && (
+          <div className="table-state">
+            <strong className="error" role="alert">{t("documentGraphLoadFailed")}</strong>
+            <button className="secondary" onClick={() => graph.refetch()}>{t("retry")}</button>
+          </div>
+        )}
+        {currentGraph?.nodes.length ? (
           <div className="document-graph-layout">
-            <DocumentGraphCanvas graph={graph.data} selectedId={selected?.id ?? null} onSelect={setSelected} />
+            <DocumentGraphCanvas key={id} graph={currentGraph} selectedId={selected?.id ?? null}
+              onSelect={(node) => setSelection({ workspaceId: id, nodeId: node.id })}
+              rearrangeLabel={t("relayout")} />
             <aside className="document-node-inspector">
               {selected ? <>
                 <p className="eyebrow">{selected.node_type}</p>
@@ -227,13 +263,14 @@ export default function DocumentWorkspaceDetail() {
                       {selected.ai_research.provider_name} · {selected.ai_research.model_name}
                     </small>
                   </> : <p className="muted">{t("aiResearchPending")}</p>}
+                  {selectedResearchError && <p className="notice error-notice" role="alert">{selectedResearchError}</p>}
                   {can("researcher") && !["document", "section"].includes(selected.node_type) && (
                     <button
                       className="secondary"
                       onClick={() => researchNode(selected)}
-                      disabled={researchingNodeId === selected.id}
+                      disabled={selectedResearching || researchingGraph}
                     >
-                      {researchingNodeId === selected.id
+                      {selectedResearching
                         ? t("researchingWithAi")
                         : t("researchNodeWithAi")}
                     </button>
@@ -246,7 +283,13 @@ export default function DocumentWorkspaceDetail() {
               </> : <div className="table-state"><strong>{t("selectDocumentNode")}</strong></div>}
             </aside>
           </div>
-        ) : <div className="table-state"><strong>{activeStatuses.includes(item.processing_status) ? t("graphProcessing") : t("noDocumentGraph")}</strong></div>}
+        ) : graphProcessing || graphFailed ? (
+          <div className="table-state"><strong>{t(graphFailed ? "documentGraphLoadFailed" : "graphProcessing")}</strong></div>
+        ) : graph.isLoading ? (
+          <div className="table-state" role="status"><span className="spinner" />{t("loading")}</div>
+        ) : !graph.isError && (
+          <div className="table-state"><strong>{t("noDocumentGraph")}</strong></div>
+        )}
       </section>
     </>
   );

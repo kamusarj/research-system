@@ -313,6 +313,31 @@ it("pins the selected local model when importing a shared chat", async () => {
   }));
 });
 
+it.each(["new", "import"])("keeps local verification and submit in sync when reopening the same %s form", async (form) => {
+  vi.mocked(verifyLocalChatModel).mockClear();
+  render(<ChatPage />);
+  const open = screen.getByRole("button", { name: form === "new" ? "newChat" : "importChatGPT" });
+  fireEvent.click(open);
+  if (form === "import") fireEvent.change(screen.getByLabelText("chatGPTSharedLink"), { target: { value: "https://chatgpt.com/share/local-fixture" } });
+  await chooseLocalModel("ollama");
+  const submit = screen.getByRole("button", { name: form === "new" ? "createChat" : "importChat" });
+  expect(submit).toBeEnabled();
+  fireEvent.click(open);
+  expect(screen.getByText(/Đã kiểm tra mô hình local-model-b/)).toBeInTheDocument();
+  expect(submit).toBeEnabled();
+  expect(verifyLocalChatModel).toHaveBeenCalledTimes(1);
+});
+
+it("requires a fresh local probe when changing between new and import forms", async () => {
+  render(<ChatPage />);
+  fireEvent.click(screen.getByRole("button", { name: "newChat" }));
+  await chooseLocalModel("ollama");
+  fireEvent.click(screen.getByRole("button", { name: "importChatGPT" }));
+  await waitFor(() => expect(screen.queryByText(/Đã kiểm tra mô hình/)).not.toBeInTheDocument());
+  expect(screen.getByLabelText("Mô hình cục bộ")).toBeDisabled();
+  expect(screen.getByRole("button", { name: "importChat" })).toBeDisabled();
+});
+
 it("reopens an existing local session with its pinned model and sends without a key or new verification", async () => {
   session.provider_name = "local_openai";
   session.model_name = "pinned-installed-model";

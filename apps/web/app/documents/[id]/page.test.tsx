@@ -4,6 +4,7 @@ import DocumentWorkspaceDetail from "./page";
 
 vi.mock("next/navigation", () => ({ useParams: () => ({ id: "workspace-1" }) }));
 vi.mock("@tanstack/react-query", () => ({
+  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
   useQuery: ({ queryKey }: { queryKey: string[] }) => {
     if (queryKey[0] === "document-workspace-content") {
       return {

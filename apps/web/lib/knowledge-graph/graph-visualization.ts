@@ -1,9 +1,25 @@
-import type { GraphNode, GraphView, KnowledgeGraph } from "./types";
+import type { GraphEdge, GraphNode, GraphView, KnowledgeGraph } from "./types";
 
 const HIERARCHY_EDGE_TYPES = new Set(["PARENT_OF", "BROADER_THAN"]);
 
 export function isHierarchyEdgeType(type: string): boolean {
   return HIERARCHY_EDGE_TYPES.has(type);
+}
+
+export function isHierarchyTreeEdge(edge: Pick<GraphEdge, "type" | "hierarchy_secondary">): boolean {
+  return isHierarchyEdgeType(edge.type) && !edge.hierarchy_secondary;
+}
+
+export function excludeGraphNodes(graph: KnowledgeGraph, excludedIds: ReadonlySet<string>): KnowledgeGraph {
+  if (excludedIds.size === 0) return graph;
+  const nodes = graph.nodes.filter((node) => !excludedIds.has(node.id));
+  const edges = graph.edges.filter((edge) => !excludedIds.has(edge.source) && !excludedIds.has(edge.target));
+  return {
+    ...graph,
+    nodes,
+    edges,
+    meta: { ...graph.meta, node_count: nodes.length, edge_count: edges.length },
+  };
 }
 
 export function graphClusterCount(graph: KnowledgeGraph): number {
@@ -54,6 +70,13 @@ export function buildSystemMapPresentation(
     graph.nodes.filter((node) => node.type === "SystemRoot").map((node) => node.id),
   );
   const hierarchyEdges = graph.edges.filter((edge) => isHierarchyEdgeType(edge.type));
+  const childrenByPillar = new Map<string, Set<string>>();
+  hierarchyEdges.forEach((edge) => {
+    if (nodeById.get(edge.source)?.type !== "SystemPillar" || !nodeById.has(edge.target)) return;
+    const children = childrenByPillar.get(edge.source) ?? new Set<string>();
+    children.add(edge.target);
+    childrenByPillar.set(edge.source, children);
+  });
   const linkedPillarIds = new Set(
     hierarchyEdges
       .filter((edge) => rootIds.has(edge.source) && nodeById.get(edge.target)?.type === "SystemPillar")
@@ -67,16 +90,16 @@ export function buildSystemMapPresentation(
     : null;
   const visibleIds = new Set<string>([...rootIds, ...pillarIds]);
 
-  if (openedPillarId) {
-    hierarchyEdges
-      .filter((edge) => edge.source === openedPillarId)
-      .forEach((edge) => visibleIds.add(edge.target));
-  }
+  if (openedPillarId) childrenByPillar.get(openedPillarId)?.forEach((id) => visibleIds.add(id));
 
   const nodes = graph.nodes
     .filter((node) => visibleIds.has(node.id))
     .map((node) => node.type === "SystemPillar"
-      ? { ...node, expanded_group: node.id === openedPillarId }
+      ? {
+          ...node,
+          child_count: childrenByPillar.get(node.id)?.size ?? 0,
+          expanded_group: node.id === openedPillarId,
+        }
       : node);
   const edges = graph.edges.filter(
     (edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target),
@@ -163,7 +186,7 @@ export function collapseDenseHierarchyLeaves(
   threshold = 8,
   previewCount = 4,
 ): ProgressiveHierarchyPresentation {
-  const hierarchyEdges = graph.edges.filter((edge) => isHierarchyEdgeType(edge.type));
+  const hierarchyEdges = graph.edges.filter(isHierarchyTreeEdge);
   const outgoing = new Set(hierarchyEdges.map((edge) => edge.source));
   const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
   const childrenByParent = new Map<string, GraphNode[]>();
@@ -237,7 +260,8 @@ export function mergeHierarchyRelationshipOverlay(
   hierarchy: KnowledgeGraph,
   relationship: KnowledgeGraph | undefined,
 ): HierarchyRelationshipOverlay {
-  if (!relationship) return { graph: hierarchy, semanticEdgeCount: 0 };
+  const supplementalEdges = hierarchy.edges.filter((edge) => edge.hierarchy_secondary).length;
+  if (!relationship) return { graph: hierarchy, semanticEdgeCount: supplementalEdges };
   const visibleIds = new Set(hierarchy.nodes.map((node) => node.id));
   const existingIds = new Set(hierarchy.edges.map((edge) => edge.id));
   const semanticEdges = relationship.edges.filter(
@@ -254,7 +278,7 @@ export function mergeHierarchyRelationshipOverlay(
       edges,
       meta: { ...hierarchy.meta, edge_count: edges.length },
     },
-    semanticEdgeCount: semanticEdges.length,
+    semanticEdgeCount: semanticEdges.length + supplementalEdges,
   };
 }
 

@@ -179,10 +179,20 @@ function ChatWorkspace({ initial, renderedMessages }: WorkspaceProps) {
   const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLocaleLowerCase("vi");
   const filteredSessions = (sessions.data?.items ?? []).filter((item) => normalize(item.title).includes(normalize(search.trim())));
   function openNewChat() {
-    setLocalConnection(null);
+    // Reopening the visible form keeps the picker's successful verification.
+    // A different form/settings view remounts the picker and needs a new probe.
+    if (!showNew || showApi) setLocalConnection(null);
     setShowApi(false);
     setShowNew(true);
     setShowImport(false);
+    setHistoryOpen(false);
+    setError(null);
+  }
+  function openImportChat() {
+    if (!showImport || showApi) setLocalConnection(null);
+    setShowApi(false);
+    setShowImport(true);
+    setShowNew(false);
     setHistoryOpen(false);
     setError(null);
   }
@@ -377,7 +387,7 @@ function ChatWorkspace({ initial, renderedMessages }: WorkspaceProps) {
         <div><span className="chat-eyebrow">CÙNG SUY NGHĨ, HIỂU SÂU HƠN</span><h1>Trò chuyện với AI</h1><p>Mở rộng ý tưởng từ tri thức của bạn.</p></div>
         {can("researcher") && <div className="actions">
           <button className="secondary" disabled={working} onClick={() => openApiSettings()}>API của tôi</button>
-          <button className="secondary" disabled={working} onClick={() => { setLocalConnection(null); setShowApi(false); setShowImport(true); setShowNew(false); setHistoryOpen(false); setError(null); }}>{t("importChatGPT")}</button>
+          <button className="secondary" disabled={working} onClick={openImportChat}>{t("importChatGPT")}</button>
           <button disabled={working} onClick={openNewChat}><span aria-hidden="true">＋ </span>{t("newChat")}</button>
         </div>}
       </header>

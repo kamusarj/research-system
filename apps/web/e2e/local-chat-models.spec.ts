@@ -11,7 +11,7 @@ for (const provider of ["ollama", "local_openai"]) {
     let changedDefault = false;
     page.on("request", (request) => {
       const url = new URL(request.url());
-      if (["11434", "11435", "1234"].includes(url.port)) directModelRequests.push(url.origin);
+      if (["11434", "11435", "11437", "1234"].includes(url.port)) directModelRequests.push(url.origin);
     });
     await page.route("**/api/v1/auth/config", (route) => route.fulfill({
       json: { enabled: false, mode: "disabled", csrf_cookie_name: "research_csrf" },
@@ -63,6 +63,16 @@ for (const provider of ["ollama", "local_openai"]) {
       }
       return route.fulfill({ json: messages });
     });
+    await page.route("**/api/v1/chat/imports/chatgpt", (route) => {
+      const body = route.request().postDataJSON();
+      mutations.push(body);
+      expect(body).toEqual({
+        url: "https://chatgpt.com/share/local-regression-fixture", provider,
+        credential_source: "system", model_name: "installed-b",
+      });
+      session = { ...session, source_type: "chatgpt_shared" };
+      return route.fulfill({ status: 201, json: session });
+    });
 
     await page.goto("/chat");
     await page.getByRole("button", { name: "Cuộc trò chuyện mới", exact: true }).click();
@@ -78,6 +88,10 @@ for (const provider of ["ollama", "local_openai"]) {
     expect(verificationCalls).toBe(0);
     await page.getByRole("button", { name: "Kiểm tra mô hình cục bộ", exact: true }).click();
     await expect(create).toBeEnabled();
+    await page.getByRole("button", { name: "Cuộc trò chuyện mới", exact: true }).click();
+    await expect(page.getByText("Đã kiểm tra mô hình installed-b. Bạn có thể tạo hoặc nhập cuộc trò chuyện.", { exact: true })).toBeVisible();
+    await expect(create).toBeEnabled();
+    expect(verificationCalls).toBe(1);
     expect(mutations).toHaveLength(0);
     await create.click();
     await expect(page.getByText("Mô hình cố định · installed-b", { exact: true })).toBeVisible();
@@ -91,6 +105,24 @@ for (const provider of ["ollama", "local_openai"]) {
     expect(inventoryCalls).toBe(1);
     expect(verificationCalls).toBe(1);
     expect(mutations).toHaveLength(2);
+
+    await page.getByRole("button", { name: "Nhập từ ChatGPT", exact: true }).click();
+    await page.getByLabel("Nhà cung cấp AI", { exact: true }).selectOption(provider);
+    await page.getByLabel("Liên kết chia sẻ ChatGPT", { exact: true }).fill("https://chatgpt.com/share/local-regression-fixture");
+    const importChat = page.getByRole("button", { name: "Nhập cuộc trò chuyện", exact: true });
+    await expect(importChat).toBeDisabled();
+    await page.getByRole("button", { name: "Tải danh sách mô hình cục bộ" }).click();
+    await page.getByLabel("Mô hình cục bộ", { exact: true }).selectOption("installed-b");
+    await page.getByRole("button", { name: "Kiểm tra mô hình cục bộ", exact: true }).click();
+    await expect(importChat).toBeEnabled();
+    await page.getByRole("button", { name: "Nhập từ ChatGPT", exact: true }).click();
+    await expect(page.getByText("Đã kiểm tra mô hình installed-b. Bạn có thể tạo hoặc nhập cuộc trò chuyện.", { exact: true })).toBeVisible();
+    await expect(importChat).toBeEnabled();
+    await importChat.click();
+    await expect(page.getByText("Mô hình cố định · installed-b", { exact: true })).toBeVisible();
+    expect(inventoryCalls).toBe(2);
+    expect(verificationCalls).toBe(2);
+    expect(mutations).toHaveLength(3);
     expect(directModelRequests).toEqual([]);
     const storage = await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }));
     expect(storage).not.toContain("installed-b");

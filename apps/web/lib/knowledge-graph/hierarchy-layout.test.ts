@@ -108,3 +108,27 @@ it("packs a large shallow forest into multiple readable branch columns", () => {
     expect(positions.get(children[index].id)!.x).toBeGreaterThan(positions.get(root.id)!.x);
   });
 });
+
+it("places a secondary structural child inside the opened system pillar", () => {
+  const root = { ...node("root", "Root"), type: "SystemRoot" };
+  const primary = node("primary", "Primary pillar");
+  const alternate = { ...node("alternate", "Other pillar"), expanded_group: true };
+  const child = { ...node("child", "Child"), type: "Concept", primary_parent_id: primary.id };
+  const edges: GraphEdge[] = [
+    { id: "root-primary", source: root.id, target: primary.id, type: "PARENT_OF", confidence: 1, evidence_count: 0, evidence: [] },
+    { id: "root-alternate", source: root.id, target: alternate.id, type: "PARENT_OF", confidence: 1, evidence_count: 0, evidence: [] },
+    { id: "primary-child", source: primary.id, target: child.id, type: "PARENT_OF", confidence: 1, evidence_count: 0, evidence: [] },
+    { id: "alternate-child", source: alternate.id, target: child.id, type: "BROADER_THAN", confidence: 1, evidence_count: 0, evidence: [], hierarchy_secondary: true },
+  ];
+
+  const opened = buildHierarchyLayout([root, primary, alternate, child], edges, 900, 680);
+  const board = opened.get(alternate.id)!;
+  const placement = opened.get(child.id)!;
+  expect(placement.x - 78).toBeGreaterThanOrEqual(board.x - board.width! / 2);
+  expect(placement.x + 78).toBeLessThanOrEqual(board.x + board.width! / 2);
+  expect(placement.y - 24).toBeGreaterThanOrEqual(board.y - board.height! / 2 + 64);
+  expect(placement.y + 24).toBeLessThanOrEqual(board.y + board.height! / 2);
+
+  const closed = buildHierarchyLayout([root, primary, { ...alternate, expanded_group: false }, child], edges, 900, 680);
+  expect(closed.get(child.id)?.y).toBe(closed.get(primary.id)?.y);
+});

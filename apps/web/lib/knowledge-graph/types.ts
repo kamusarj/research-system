@@ -45,6 +45,7 @@ export type GraphEdge = {
   confidence: number;
   evidence_count: number;
   evidence: GraphEvidence[];
+  hierarchy_secondary?: boolean;
 };
 
 export type KnowledgeGraph = {

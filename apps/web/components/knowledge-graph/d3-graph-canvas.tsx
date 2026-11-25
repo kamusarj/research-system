@@ -11,6 +11,8 @@ type Props = {
   fitNonce: number;
   layout: GraphLayoutMode;
   labelsVisible: boolean;
+  selectedNodeId?: string | null;
+  selectedEdgeId?: string | null;
   onNodeSelect: (node: GraphNode) => void;
   onEdgeSelect: (edge: GraphEdge) => void;
   onClearSelection: () => void;
@@ -35,6 +37,8 @@ export function D3GraphCanvas({
   fitNonce,
   layout,
   labelsVisible,
+  selectedNodeId,
+  selectedEdgeId,
   onNodeSelect,
   onEdgeSelect,
   onClearSelection,
@@ -115,10 +119,19 @@ export function D3GraphCanvas({
     if (!renderer) return;
     if (hierarchyLabels) renderer.setHierarchyLabels(hierarchyLabels);
     renderer.setLayoutMode(layout);
-    renderer.setLabelsVisible(labelsVisible);
     renderer.setData(nodes, edges);
     setZoom(renderer.getZoom());
-  }, [nodes, edges, layout, labelsVisible, hierarchyLabels]);
+  }, [nodes, edges, layout, hierarchyLabels]);
+
+  useEffect(() => {
+    rendererRef.current?.setLabelsVisible(labelsVisible);
+  }, [labelsVisible]);
+
+  useEffect(() => {
+    if (selectedNodeId !== undefined || selectedEdgeId !== undefined) {
+      rendererRef.current?.setSelection(selectedNodeId ?? null, selectedEdgeId ?? null);
+    }
+  }, [selectedNodeId, selectedEdgeId]);
 
   useEffect(() => {
     if (previousLayoutNonce.current === layoutNonce) return;

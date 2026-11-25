@@ -88,7 +88,7 @@ const systemGraph = {
 };
 
 test("Business AI Agents system map renders on its separate route", async ({ page }) => {
-  await page.route("**/api/v1/graph/system?limit=1000", (route) =>
+  await page.route("**/api/v1/graph/system", (route) =>
     route.fulfill({ json: systemGraph }),
   );
 
@@ -190,8 +190,109 @@ test("Business AI Agents system map renders on its separate route", async ({ pag
   await expect(page.locator(".graph-legend")).toBeVisible();
   await page.getByRole("button", { name: "Nhãn" }).click();
   await expect(page.getByRole("button", { name: "Nhãn" })).toHaveAttribute("aria-pressed", "false");
+  const rootOverlay = page.locator('.d3-system-label-overlay[data-node-id="system-root"]');
+  const pillar = page.locator('.d3-node[data-node-id="system-pillar"]');
+  await expect(rootOverlay.locator(".d3-node-label")).toHaveCSS("opacity", "0");
+  await expect(rootOverlay.locator(".d3-hierarchy-type")).toHaveCSS("opacity", "0");
+  await expect(pillar).toHaveAttribute("aria-label", /Agent Architecture/);
+  await pillar.dispatchEvent("click");
+  await expect(page.locator('.d3-node[data-node-id="system-concept"]')).toBeVisible();
+  await expect(rootOverlay.locator(".d3-node-label")).toHaveCSS("opacity", "0");
   await page.getByRole("button", { name: "Đặt lại" }).click();
   await expect(page.getByRole("button", { name: "Phân cấp" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("button", { name: "Nhãn" })).toHaveAttribute("aria-pressed", "true");
+  await expect(rootOverlay.locator(".d3-node-label")).toHaveCSS("opacity", "1");
   await expect(page.getByRole("button", { name: "Khám phá" })).toHaveAttribute("aria-pressed", "false");
+});
+
+test("a system map drag keeps its card and camera when search changes the graph", async ({ page }, testInfo) => {
+  await page.route("**/api/v1/graph/system", (route) =>
+    route.fulfill({ json: systemGraph }),
+  );
+  await page.goto("/graph/system");
+  await page.getByRole("button", { name: "Mạng", exact: true }).click();
+  const node = page.locator('.d3-node[data-node-id="system-root"]');
+  const card = node.locator(".d3-node-card");
+  await card.scrollIntoViewIfNeeded();
+  const box = (await card.boundingBox())!;
+  const x = Math.round(box.x + box.width / 2);
+  const y = Math.round(box.y + box.height / 2);
+  const graph = page.locator(".d3-graph-container");
+  const wire = page.locator('[data-edge-id="system-root-pillar"]');
+  const before = await node.getAttribute("transform");
+  const wireBefore = await wire.getAttribute("d");
+  const camera = await graph.getAttribute("transform");
+
+  const cdp = testInfo.project.name === "mobile-chrome" ? await page.context().newCDPSession(page) : null;
+  const start = async () => {
+    if (cdp) {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
+    } else {
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+    }
+  };
+  const move = async (offset: number) => {
+    if (cdp) {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y + offset }] });
+    } else {
+      await page.mouse.move(x, y + offset);
+    }
+  };
+
+  if (cdp) {
+    await start();
+    await move(32);
+    await expect(node).toHaveClass(/d3-node-dragging/);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
+    await expect(node).not.toHaveClass(/d3-node-dragging/);
+    await expect(node).toHaveAttribute("transform", before!);
+    await expect(wire).toHaveAttribute("d", wireBefore!);
+  }
+
+  await start();
+  await expect(node).not.toHaveClass(/d3-node-dragging/);
+  await move(32);
+  await expect(node).toHaveClass(/d3-node-dragging/);
+  const midDrag = await node.getAttribute("transform");
+  await page.getByRole("textbox", { name: "Tìm nút…" }).evaluate((input) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "Agent Architecture");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(page.locator(".graph-canvas-status")).toContainText("2 nút");
+  await expect(graph).toHaveAttribute("transform", camera!);
+  await expect(node).toHaveAttribute("transform", midDrag!);
+  await move(65);
+  await expect(node).not.toHaveAttribute("transform", midDrag!);
+  const finalPosition = await node.getAttribute("transform");
+  if (cdp) await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  else await page.mouse.up();
+
+  await expect(node).not.toHaveClass(/d3-node-dragging/);
+  await expect(page.locator('.d3-node[data-node-id="system-concept"]')).toHaveCount(0);
+  await expect(node).toHaveAttribute("transform", finalPosition!);
+  await expect(wire).not.toHaveAttribute("d", wireBefore!);
+  await expect(graph).toHaveAttribute("transform", camera!);
+
+  if (cdp) {
+    const cardBox = (await card.boundingBox())!;
+    const viewport = page.viewportSize()!;
+    const cardX = Math.round(cardBox.x + cardBox.width / 2);
+    const cardY = Math.round(cardBox.y + cardBox.height / 2);
+    const direction = cardX < viewport.width / 2 ? 1 : -1;
+    const finger = { x: cardX, y: cardY + 24, id: 0 };
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ ...finger, y: cardY }] });
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [finger] });
+    await expect(node).toHaveClass(/d3-node-dragging/);
+    const second = { x: cardX + direction * 46, y: finger.y, id: 1 };
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [finger, second] });
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [finger, { ...second, x: cardX + direction * 112 }],
+    });
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await expect(graph).not.toHaveAttribute("transform", camera!);
+    await expect(node).not.toHaveClass(/d3-node-dragging/);
+    await expect(node).toHaveAttribute("transform", finalPosition!);
+  }
 });

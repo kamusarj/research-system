@@ -6,7 +6,7 @@ import type { KnowledgeGraph } from "@/lib/knowledge-graph/types";
 
 const mocks = vi.hoisted(() => ({
   graphState: {} as Record<string, unknown>,
-  expandedGraphState: {} as Record<string, unknown>,
+  overlayState: null as Record<string, unknown> | null,
   graphOptions: {} as Record<string, Record<string, unknown>>,
 }));
 
@@ -55,15 +55,11 @@ vi.mock("@/hooks/use-knowledge-graph", async () => {
     ...actual,
     useKnowledgeGraph: (_filters: unknown, options: Record<string, unknown>) => {
       mocks.graphOptions.filters = _filters as Record<string, unknown>;
-      // The expanded-board query is the only hierarchy query bounded to 40 nodes; the
-      // overview query draws the current focus and its direct children.
-      const key = options.view === "relationship"
-        ? "relationship"
-        : options.limit === 40
-          ? "expanded"
-          : "overview";
+      const key = options.view === "relationship" ? "relationship" : "overview";
       mocks.graphOptions[key] = options;
-      return key === "expanded" ? mocks.expandedGraphState : mocks.graphState;
+      return options.view === "relationship" && mocks.overlayState
+        ? mocks.overlayState
+        : mocks.graphState;
     },
   };
 });
@@ -73,15 +69,20 @@ vi.mock("@/components/knowledge-graph/d3-graph-canvas-lazy", () => ({
     onNodeSelect,
     onExpandNode,
     layout,
+    nodes,
+    selectedNodeId,
     status,
   }: {
     onNodeSelect: (node: KnowledgeGraph["nodes"][number]) => void;
     onExpandNode: (nodeId: string) => void;
     layout: string;
+    nodes: KnowledgeGraph["nodes"];
+    selectedNodeId?: string | null;
     status?: { detail: string };
   }) => (
     <div>
       <span data-testid="mock-view">{layout}</span>
+      <span data-testid="mock-selected">{selectedNodeId}</span>
       <span data-testid="mock-status">{status?.detail}</span>
       <button data-testid="mock-board" onClick={() => onExpandNode("pillar")}>
         Agent System Architecture board
@@ -91,16 +92,10 @@ vi.mock("@/components/knowledge-graph/d3-graph-canvas-lazy", () => ({
       </button>
       <button
         data-testid="mock-node"
-        onClick={() => onNodeSelect({
-          id: "concept:rag",
-          type: "Concept",
-          label: "RAG",
-          summary: "Retrieval augmented generation",
-          confidence: 0.9,
-          source_count: 2,
-          published: true,
-          degree: 1,
-        })}
+        onClick={() => {
+          const node = nodes.find((item) => item.id === "concept:rag");
+          if (node) onNodeSelect(node);
+        }}
       >
         RAG node
       </button>
@@ -191,16 +186,10 @@ describe("KnowledgeGraphPage", () => {
       error: null,
       refetch: vi.fn(),
       expandNode: vi.fn().mockResolvedValue(baseGraph),
-      expandingNodeId: null,
+      expandingNodeIds: new Set(),
+      resetExpansion: vi.fn(),
     };
-    mocks.expandedGraphState = {
-      graph: expandedGraph,
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-      expandNode: vi.fn(),
-      expandingNodeId: null,
-    };
+    mocks.overlayState = null;
   });
 
   it("renders the empty state", () => {
@@ -221,12 +210,14 @@ describe("KnowledgeGraphPage", () => {
   });
 
   it("opens node details when a node is selected", () => {
+    mocks.graphState.graph = expandedGraph;
     render(<KnowledgeGraphPage />);
     fireEvent.click(screen.getByTestId("mock-node"));
     expect(screen.getByTestId("node-details")).toHaveTextContent("RAG");
   });
 
   it("opens in hierarchy mode and keeps the selection when switching to relationships", () => {
+    mocks.graphState.graph = expandedGraph;
     render(<KnowledgeGraphPage />);
     expect(screen.getByTestId("mock-view")).toHaveTextContent("hierarchy");
     fireEvent.click(screen.getByTestId("mock-node"));
@@ -242,7 +233,7 @@ describe("KnowledgeGraphPage", () => {
     expect(screen.getByRole("button", { name: "Phân cấp" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByRole("button", { name: "Quỹ đạo" }));
     expect(screen.getByTestId("mock-view")).toHaveTextContent("orbit");
-    expect(mocks.graphOptions.relationship).toMatchObject({ view: "relationship", limit: 1000 });
+    expect(mocks.graphOptions.relationship).toMatchObject({ view: "relationship", full: true });
     fireEvent.click(screen.getByRole("button", { name: "Mạng" }));
     expect(screen.getByTestId("mock-view")).toHaveTextContent("relationship");
   });
@@ -253,7 +244,7 @@ describe("KnowledgeGraphPage", () => {
     expect(mocks.graphOptions.overview).toMatchObject({
       rootNodeId: undefined,
       depth: 1,
-      limit: 1000,
+      full: true,
     });
     expect(screen.getByRole("link", { name: "openSystemMap" })).toHaveAttribute(
       "href",
@@ -265,7 +256,7 @@ describe("KnowledgeGraphPage", () => {
     expect(mocks.graphOptions.overview).toMatchObject({
       rootNodeId: "pillar",
       depth: 1,
-      limit: 1000,
+      full: true,
     });
   });
 
@@ -339,16 +330,16 @@ describe("KnowledgeGraphPage", () => {
     renderTranslated();
 
     expect(screen.getByText(/Đang hiển thị 2 trong 132 nút/)).toBeInTheDocument();
-    expect(screen.getByText(/giới hạn vận hành an toàn là 1.000 nút/)).toBeInTheDocument();
+    expect(screen.getByText(/giới hạn 60 nút theo cấu hình/)).toBeInTheDocument();
   });
 
-  it("requests up to 1,000 nodes in both relationship and hierarchy layouts", () => {
+  it("requests the server-configured limit in both relationship and hierarchy layouts", () => {
     renderTranslated();
-    expect(mocks.graphOptions.overview).toMatchObject({ limit: 1000, view: "hierarchy" });
+    expect(mocks.graphOptions.overview).toMatchObject({ full: true, view: "hierarchy" });
 
     fireEvent.click(screen.getByRole("button", { name: /Mạng/ }));
 
-    expect(mocks.graphOptions.relationship).toMatchObject({ limit: 1000, view: "relationship" });
+    expect(mocks.graphOptions.relationship).toMatchObject({ full: true, view: "relationship" });
   });
 
   it("counts what is drawn, and names the wider total separately", () => {
@@ -433,10 +424,36 @@ describe("KnowledgeGraphPage", () => {
   });
 
   it("announces the current selection for a screen reader", () => {
+    mocks.graphState.graph = expandedGraph;
     renderTranslated();
 
     fireEvent.click(screen.getByTestId("mock-node"));
 
     expect(screen.getByRole("status")).toHaveTextContent("Đã chọn Khái niệm: RAG");
+  });
+
+  it("keeps the hierarchy visible with a retry when its relationship overlay fails", () => {
+    const refetch = vi.fn();
+    mocks.overlayState = { ...mocks.graphState, graph: undefined, error: new Error("offline"), refetch };
+    renderTranslated();
+
+    expect(screen.getByTestId("mock-view")).toHaveTextContent("hierarchy");
+    expect(screen.getByTestId("mock-status")).toHaveTextContent("— quan hệ ngữ nghĩa");
+    expect(screen.getByText("Không thể tải các quan hệ của chế độ Phân cấp.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Thử lại" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the inspector and canvas selection when resetting the graph", () => {
+    mocks.graphState.graph = expandedGraph;
+    render(<KnowledgeGraphPage />);
+    fireEvent.click(screen.getByTestId("mock-node"));
+    expect(screen.getByTestId("mock-selected")).toHaveTextContent("concept:rag");
+
+    fireEvent.click(screen.getByRole("button", { name: "reset" }));
+
+    expect(screen.getByTestId("mock-selected")).toBeEmptyDOMElement();
+    expect(screen.queryByTestId("node-details")).not.toBeInTheDocument();
+    expect(mocks.graphState.resetExpansion).toHaveBeenCalledOnce();
   });
 });
