@@ -31,9 +31,9 @@ jobs:
           uv lock --check
           uv sync --frozen --all-extras
       - name: Lint
-        run: uv run ruff check .
+        run: uv run --frozen ruff check .
       - name: Test
-        run: uv run pytest
+        run: uv run --frozen python -m pytest
 
   discord-bot:
     name: Discord bot (ruff, pytest)
@@ -54,9 +54,9 @@ jobs:
           uv lock --check
           uv sync --frozen --all-extras
       - name: Lint
-        run: uv run ruff check .
+        run: uv run --frozen ruff check .
       - name: Test
-        run: uv run pytest
+        run: uv run --frozen python -m pytest
 
   web:
     name: Web (lint, typecheck, vitest, build)
