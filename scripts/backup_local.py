@@ -12,9 +12,19 @@ import subprocess
 import tarfile
 import tempfile
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 KIND = "business-ai-agents-scheduled-backup-v1"
+
+
+def project_lock_path(repo: Path) -> Path:
+    directory = Path.home() / ".cache/business-ai-agents/backup-locks"
+    directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if directory.is_symlink():
+        raise RuntimeError("Backup lock directory must not be a symlink")
+    directory.chmod(0o700)
+    identity = hashlib.sha256(os.fsencode(repo.resolve())).hexdigest()
+    return directory / f"{identity}.lock"
 
 
 def digest(path: Path) -> str:
@@ -23,6 +33,31 @@ def digest(path: Path) -> str:
         for block in iter(lambda: source.read(1024 * 1024), b""):
             result.update(block)
     return result.hexdigest()
+
+
+def compose_command(repo: Path, env_file: Path | None = None) -> list[str]:
+    compose = ["docker", "compose", "--project-directory", str(repo)]
+    if env_file is None and (repo / ".env.team").is_file():
+        env_file = repo / ".env.team"
+    if env_file is not None:
+        compose += [
+            "--env-file",
+            str(env_file.resolve(strict=True)),
+            "-f",
+            str(repo / "docker-compose.yml"),
+            "-f",
+            str(repo / "docker-compose.team.yml"),
+        ]
+    else:
+        compose += [
+            "-p",
+            "businessaiagents",
+            "-f",
+            str(repo / "docker-compose.yml"),
+            "-f",
+            str(repo / "docker-compose.multi-user.yml"),
+        ]
+    return compose
 
 
 def prune_completed(destination: Path, keep: int) -> None:
@@ -42,31 +77,21 @@ def prune_completed(destination: Path, keep: int) -> None:
         shutil.rmtree(path)
 
 
-def backup(repo: Path, destination: Path, keep: int) -> Path:
+def backup(repo: Path, destination: Path, keep: int, env_file: Path | None = None) -> Path:
     os.umask(0o077)
     destination.mkdir(parents=True, mode=0o700, exist_ok=True)
     if destination.is_symlink():
         raise RuntimeError("Backup destination must not be a symlink")
     destination.chmod(0o700)
-    with (destination / ".backup.lock").open("a") as lock:
+    # A manual backup and the timer may use different destinations. Serialize their entire
+    # stop/snapshot/resume windows, otherwise one could resume writes during the other snapshot.
+    with (
+        project_lock_path(repo).open("a") as project_lock,
+        (destination / ".backup.lock").open("a") as lock,
+    ):
+        fcntl.flock(project_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        compose = ["docker", "compose", "--project-directory", str(repo), "-p", "businessaiagents"]
-        if (repo / ".env.team").is_file():
-            compose += [
-                "--env-file",
-                str(repo / ".env.team"),
-                "-f",
-                str(repo / "docker-compose.yml"),
-                "-f",
-                str(repo / "docker-compose.team.yml"),
-            ]
-        else:
-            compose += [
-                "-f",
-                str(repo / "docker-compose.yml"),
-                "-f",
-                str(repo / "docker-compose.multi-user.yml"),
-            ]
+        compose = compose_command(repo, env_file)
 
         def run(args, **kwargs):
             return subprocess.run(compose + args, check=True, stderr=subprocess.PIPE, **kwargs)
@@ -124,12 +149,14 @@ def backup(repo: Path, destination: Path, keep: int) -> Path:
                     )
                 with tarfile.open(work / "document-objects.tar.gz", "r:gz") as archive:
                     for member in archive:
+                        parts = PurePosixPath(member.name).parts
                         if (
                             member.issym()
                             or member.islnk()
                             or not (member.isfile() or member.isdir())
+                            or (parts and parts[0].startswith(".restore-"))
                         ):
-                            raise RuntimeError("Unexpected object archive entry")
+                            raise RuntimeError("Unexpected archive entry or unfinished restore")
                         if member.isfile():
                             with archive.extractfile(member) as source:
                                 while source.read(1024 * 1024):
@@ -167,13 +194,14 @@ def main() -> int:
     signal.signal(signal.SIGTERM, interrupted)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, required=True)
+    parser.add_argument("--env-file", type=Path, help="Explicit team environment used by team.sh")
     parser.add_argument(
         "--destination", type=Path, default=Path.home() / "business-ai-agents-backups/scheduled"
     )
     parser.add_argument("--keep", type=int, default=14)
     args = parser.parse_args()
     try:
-        target = backup(args.repo.resolve(), args.destination, args.keep)
+        target = backup(args.repo.resolve(), args.destination, args.keep, args.env_file)
     except Exception:
         print("Backup failed; application services were resumed where possible")
         return 1

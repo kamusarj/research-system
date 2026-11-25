@@ -58,36 +58,20 @@ db_password() {
 }
 
 backup() {
-  local root stamp target keep
-  root=${BACKUP_DIR:-"$HOME/business-ai-agents-backups"}
-  keep=${BACKUP_KEEP:-14}
-  stamp=$(date +%Y%m%d-%H%M%S)
-  target="$root/$stamp"
-  mkdir -p "$target"
-  chmod 700 "$root" "$target"
-  if [[ "${BACKUP_QUIESCE:-0}" == "1" ]]; then
-    compose stop api worker
-    trap 'compose start api worker >/dev/null' EXIT
-  fi
-  # Sao lưu cơ sở dữ liệu trước rồi mới đến tệp: tệp tài liệu chỉ được thêm phiên bản mới, nên mọi
-  # tham chiếu trong bản dump đều có đối tượng tương ứng trong bản lưu trữ.
-  compose exec -T database sh -ec 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' \
-    >"$target/postgres.dump"
-  compose exec -T database pg_restore --list <"$target/postgres.dump" >/dev/null
-  if [[ "${BACKUP_QUIESCE:-0}" == "1" ]]; then
-    compose run --rm --no-deps -T --entrypoint tar worker \
-      -C /var/lib/research-system/objects -czf - . >"$target/document-objects.tar.gz"
-  else
-    compose exec -T worker tar -C /var/lib/research-system/objects -czf - . \
-      >"$target/document-objects.tar.gz"
-  fi
-  tar -tzf "$target/document-objects.tar.gz" >/dev/null
-  chmod 600 "$target"/*
-  echo "Đã sao lưu vào $target"
-  if [[ "$keep" =~ ^[0-9]+$ && "$keep" -gt 0 ]]; then
-    find "$root" -mindepth 1 -maxdepth 1 -type d -name '[0-9]*-[0-9]*' | sort | head -n "-$keep" |
-      while read -r old; do rm -rf -- "$old"; done
-  fi
+  # Cùng engine với timer: luôn dừng ghi trong cả hai bước dump/tar, chỉ khởi động lại
+  # dịch vụ vốn đang chạy và chỉ áp dụng retention cho backup có manifest do engine tạo.
+  python3 "$repo_dir/scripts/backup_local.py" --repo "$repo_dir" --env-file "$env_file" \
+    --destination "${BACKUP_DIR:-"$HOME/business-ai-agents-backups"}" --keep "${BACKUP_KEEP:-14}"
+}
+
+restore() {
+  [[ -n "${RESTORE_FROM:-}" ]] || die "cần RESTORE_FROM=/đường/dẫn/backup đã có manifest"
+  check_env
+  local options=()
+  [[ "${RESTORE_APPLY:-0}" != "1" ]] || options+=(--apply)
+  [[ -z "${RESTORE_COMPOSE_FILE:-}" ]] || options+=(--compose-file "$RESTORE_COMPOSE_FILE")
+  python3 "$repo_dir/scripts/restore_local.py" --repo "$repo_dir" --env-file "$env_file" \
+    --backup "$RESTORE_FROM" "${options[@]}"
 }
 
 verify() {
@@ -121,6 +105,7 @@ Cách dùng: scripts/team.sh <lệnh>
   member        Tạo nhà nghiên cứu: NAME="..." EMAIL=... scripts/team.sh member
   db-password   Đổi mật khẩu PostgreSQL hiện có theo POSTGRES_PASSWORD
   backup        Sao lưu PostgreSQL + tệp tài liệu vào BACKUP_DIR (mặc định ~/business-ai-agents-backups)
+  restore       RESTORE_FROM=/backup: chỉ kiểm tra; RESTORE_APPLY=1 mới ghi đè trong bảo trì
   verify        Kiểm tra nhanh bản triển khai đang chạy
 EOF
 }
@@ -140,6 +125,7 @@ case "${1:-}" in
   member) create_user researcher ;;
   db-password) db_password ;;
   backup) backup ;;
+  restore) restore ;;
   verify) verify ;;
   *) usage; [[ -z "${1:-}" || "$1" == "-h" || "$1" == "--help" ]] || exit 2 ;;
 esac

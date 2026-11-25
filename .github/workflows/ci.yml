@@ -1,0 +1,149 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    name: API (ruff, pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: apps/api/uv.lock
+      - name: Install dependencies
+        run: |
+          uv lock --check
+          uv sync --frozen --all-extras
+      - name: Lint
+        run: uv run ruff check .
+      - name: Test
+        run: uv run pytest
+
+  discord-bot:
+    name: Discord bot (ruff, pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/discord-bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: apps/discord-bot/uv.lock
+      - name: Install dependencies
+        run: |
+          uv lock --check
+          uv sync --frozen --all-extras
+      - name: Lint
+        run: uv run ruff check .
+      - name: Test
+        run: uv run pytest
+
+  web:
+    name: Web (lint, typecheck, vitest, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/web
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test
+        run: npm test
+      - name: Build
+        run: npm run build
+
+  postgres-migrations:
+    name: PostgreSQL migration and model parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.5-pg16-bookworm@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
+        env:
+          POSTGRES_USER: research
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: baa_ci_migrations
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U research -d baa_ci_migrations"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DATABASE_URL: postgresql+psycopg://research:ci@127.0.0.1:5432/baa_ci_migrations
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: apps/api/uv.lock
+      - name: Install locked dependencies
+        working-directory: apps/api
+        run: |
+          uv lock --check
+          uv sync --frozen --all-extras
+      - name: Verify migrations on a disposable database
+        run: bash scripts/verify_postgres_migrations.sh
+      - name: Verify lease ownership and search filters on PostgreSQL
+        working-directory: apps/api
+        env:
+          RESEARCH_LEASE_TEST_DATABASE_URL: postgresql+psycopg://research:ci@127.0.0.1:5432/baa_ci_migrations
+          PYTHONPATH: .
+        run: uv run --frozen python -m pytest tests/test_research_execution_guards.py tests/test_pgvector_filter_contract.py
+
+  compose:
+    name: Compose config (base, local-ai, team)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose configuration
+        run: |
+          cat > "$RUNNER_TEMP/ci-fixture" <<'EOF'
+          COMPOSE_PROJECT_NAME=ci
+          PUBLIC_URL=https://ci.example.test
+          POSTGRES_PASSWORD=ci
+          OLLAMA_API_KEY=ci
+          LOCAL_OPENAI_BASE_URL=http://172.17.0.1:11437/v1
+          LOCAL_OPENAI_API_KEY=ci
+          LOCAL_OPENAI_MODEL=ci-model
+          EOF
+          docker compose --env-file "$RUNNER_TEMP/ci-fixture" \
+            --profile local-ai -f docker-compose.yml config -q
+          docker compose --env-file "$RUNNER_TEMP/ci-fixture" \
+            --profile local-ai -f docker-compose.yml -f docker-compose.multi-user.yml config -q
+          docker compose --env-file "$RUNNER_TEMP/ci-fixture" \
+            --profile local-ai -f docker-compose.yml -f docker-compose.team.yml config -q

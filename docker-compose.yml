@@ -456,8 +456,8 @@ services:
       timeout: 5s
       retries: 24
       start_period: 30s
-    # The named node_modules volume survives image rebuilds, so sync it when package.json changes.
-    command: sh -ec "npm ls --include=dev --depth=0 >/dev/null 2>&1 || npm ci --include=dev --no-audit --no-fund; exec npm run dev -- --hostname 0.0.0.0"
+    # Sync the persistent dependency volume against the complete lockfile before serving.
+    command: sh -ec "sh scripts/ensure-dependencies.sh; exec npm run dev -- --hostname 0.0.0.0"
 
 volumes:
   postgres_data:

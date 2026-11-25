@@ -13,7 +13,7 @@ services:
       NODE_ENV: production
       NEXT_TELEMETRY_DISABLED: "1"
     command: >-
-      sh -ec 'npm ls --include=dev --depth=0 >/dev/null 2>&1 || npm ci --include=dev --no-audit --no-fund;
+      sh -ec 'sh scripts/ensure-dependencies.sh;
       npm run build;
       cp -R .next/static .next/standalone/.next/static;
       if [ -d public ]; then cp -R public .next/standalone/public; fi;

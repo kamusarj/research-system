@@ -4,7 +4,7 @@ BOT_DIR := apps/discord-bot
 
 .PHONY: dev test lint build migrate seed evaluate-graph-v2 verify-graph verify-migrations discord-bot \
 	team-config team-up team-down team-ps team-logs team-owner team-member team-db-password \
-	team-backup team-verify local-owner
+	team-backup team-restore team-verify local-owner
 
 dev:
 	docker compose up --build
@@ -74,6 +74,9 @@ team-db-password:
 
 team-backup:
 	scripts/team.sh backup
+
+team-restore:
+	scripts/team.sh restore
 
 team-verify:
 	scripts/team.sh verify
