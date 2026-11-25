@@ -1118,3 +1118,33 @@
   24h; thiếu hoặc xung đột verdict thì kiểm tra lại và fail closed. Không bỏ verifier để giảm token.
 - Bản vá pypdf6.21.4 được khóa và chạy trong API/worker; không force downgrade công cụ npm.
 - Quyết định đầy đủ: `docs/decisions/0054-local-readiness-and-credential-boundaries.md`.
+
+## DEC-068 - Sửa phát hiện audit và đo đối chứng có thể kiểm chứng
+
+- Ngày: 2026-11-19; intake19 / high-risk `US-AUDIT-REMEDIATION` / decision0056.
+- Writer chỉ chọn/thứ tự claim; máy chủ dựng nguyên văn claim đã xác minh, từng claim có citation.
+  Báo cáo tiếp tục là draft cần người duyệt, không dùng trùng từ để chứng minh đổi nghĩa là đúng.
+- Local transport kiểm khóa sau mỗi tầng JSON decode, deadline gồm DNS/header/body; DNS không thể
+  hủy ở hệ điều hành chỉ được phép kết thúc trong pool2 worker, kết quả muộn không tiếp tục HTTP.
+- Backup thủ công/timer dùng cùng quiesce/engine/lock chung; chỉ resume dịch vụ vốn chạy và chỉ
+  retention backup có manifest. Team env chọn đúng Compose project; local giữ project hiện hành.
+- Frontend áp dụng hash lockfile/Node ABI khi khởi động; vá Next15.5.29 và dev dependency tương thích,
+  CI Node22 + uv lock check + PostgreSQL migration smoke trên database thử rỗng.
+- Chi phí bao gồm mọi attempt có usage; thiếu usage phải hiển thị. Thêm reference có entailment,
+  giữ naive lịch sử; đối chứng cùng8 câu/model/config/code/corpus và quality gate trước kết luận20%.
+  Corpus công khai lưu ngoài repo0600, chỉ số/hash được lưu làm evidence.
+- Probe Mistral dùng dữ liệu tổng hợp; không đổi provider mặc định, không ghi key hay lỗi thô vào log.
+- Quyết định đầy đủ: `docs/decisions/0056-audit-remediation-boundaries.md`.
+
+## DEC-069 - Vá12 phát hiện audit tiếp theo
+
+- Ngày2026-11-20; intake21/high-risk `US-SECOND-AUDIT-REMEDIATION`, decision0057.
+- Giữ owner-only publish tại service trước mọi side effect; giữ evidence canonical/applied không
+  phụ thuộc origin document/chat. Restore chỉ resume sau khi mọi bước kiểm chứng thành công.
+- Lease token additive và CAS/fencing ngăn worker mất quyền ghi; không khóa DB qua lời gọi model.
+- Verifier fail closed với judgement trùng/mâu thuẫn, chỉ dùng cache có TTL24h; fuzzy matching có
+  computation budget; report phân biệt có evidence nhưng bỏ sót trình bày với thiếu evidence thật.
+- Hybrid áp dụng bộ lọc trước giới hạn và đối chiếu canonical; worker nhận task secret nhất quán;
+  limiter thu hồi identity hết hạn mà không reset identity đang hoạt động.
+- Không đổi provider mặc định, hạ quality gates hoặc chạy restore xóa dữ liệu thật để thử.
+- Chi tiết: `docs/decisions/0057-second-audit-remediation.md`.

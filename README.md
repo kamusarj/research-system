@@ -29,6 +29,9 @@ cp .env.example .env
 docker compose up --build
 ```
 
+Điền khóa của nhà cung cấp AI bạn dùng vào `.env`. Giá trị mặc định cho các tùy chọn nâng cao
+nằm trong [docker-compose.yml](docker-compose.yml).
+
 Nếu các cổng trên máy đã được dùng, có thể đổi cổng ngoài mà không đổi cổng trong container:
 
 ```bash
@@ -91,6 +94,12 @@ docker compose --profile local-ai up -d --build ollama-bridge local-openai-bridg
 ```
 
 Địa chỉ cầu nối mặc định là `172.17.0.1:11435` (Ollama) và `172.17.0.1:11437` (OpenAI-compatible, `LOCAL_OPENAI_BASE_URL=http://172.17.0.1:11437/v1`); container cục bộ truy cập được nhưng đây không phải địa chỉ LAN của máy. Đổi `OLLAMA_BRIDGE_BIND`/`LOCAL_OPENAI_BRIDGE_BIND` nếu cầu Docker dùng địa chỉ khác; đổi `OLLAMA_BRIDGE_UPSTREAM`/`LOCAL_OPENAI_BRIDGE_UPSTREAM` khi model chạy trên máy khác và được đưa về loopback của máy chủ qua SSH reverse tunnel hoặc VPN (xem `Docs/Local Model Deployment Plan.md`). Key máy chủ (`OLLAMA_API_KEY`/`LOCAL_OPENAI_API_KEY`) chỉ nằm phía server, không bao giờ trả về trình duyệt.
+
+Với **bản triển khai nhóm**, giữ cả hai file Compose và `.env.team`; lệnh cục bộ ở trên không thay
+thế lệnh nhóm. Trong `.env.team`, thêm `local-ai` vào hồ sơ HTTPS đang dùng (ví dụ
+`COMPOSE_PROFILES=https,local-ai`) và đặt URL/model theo `.env.team.example`, rồi chạy `make team-up`.
+Cầu nối team dùng mã đóng gói trong ảnh và giữ đăng nhập/HTTPS. Hướng dẫn kiểm tra từ container,
+đổi địa chỉ Docker và tunnel từ máy cá nhân: [runbook mục 5a](Docs/Team%20Deployment%20Runbook.md#5a-kết-nối-model-local).
 
 ### Dùng quota Claude Code, Codex hoặc Antigravity thay cho API
 
@@ -173,15 +182,9 @@ SearXNG chỉ nghe trong mạng Docker (không mở cổng). Một số engine (
 Skill cho Claude Code của nhóm (thư mục `.claude/skills/`):
 
 - `/research-report <câu hỏi>` chạy `scripts/research-report.sh`, lưu báo cáo vào `research-reports/` (gitignore) và tóm tắt kèm trích dẫn. Chế độ nhóm dùng `RESEARCH_API_URL` và token tài khoản dịch vụ có scope `research:run` + `research:read` (token chỉ thấy lượt của chính nó).
-- `/research-eval` chạy bộ 8 câu hỏi (`apps/api/app/evaluation/research_eval_v1.json`) cho hai biến thể và so sánh thời gian, lượt gọi AI, token, độ phủ trích dẫn, tỉ lệ trích dẫn khớp nguồn, nguồn trùng, độ phủ góc nhìn:
-
-```bash
-docker exec -w /app businessaiagents-api-1 python -m app.operations research-eval --variant naive --output /tmp/naive.json
-docker exec -w /app businessaiagents-api-1 python -m app.operations research-eval --variant optimized --output /tmp/optimized.json
-docker exec -w /app businessaiagents-api-1 python -m app.operations research-eval-compare /tmp/naive.json /tmp/optimized.json
-```
-
-Mỗi lần eval dùng cache riêng nên biến thể sau không hưởng cache của biến thể trước; lượt eval không vào hàng đợi worker.
+- `/research-eval` đo thời gian, token và chất lượng báo cáo trên bộ 8 câu hỏi
+  (`apps/api/app/evaluation/research_eval_v1.json`). Cặp để đo KPI là `reference` và `optimized`,
+  dùng cùng nguồn cố định và database đánh giá riêng. Xem [quy trình đánh giá](docs/evaluations/research-agent/README.md).
 
 Chi phí AI đo bằng bảng `ai_call_metrics` (độ trễ, token vào/ra/tổng, token được cache, độ dài prompt cho mỗi lời gọi; không lưu prompt hay câu trả lời):
 
@@ -225,6 +228,10 @@ make lint
 make build
 docker compose config -q
 ```
+
+CI GitHub Actions (`.github/workflows/ci.yml`) kiểm tra Python lockfile, lint/test API và Discord bot,
+lint/typecheck/vitest/build web trên Node22, migration/model parity trên PostgreSQL tách biệt và
+Compose base/multi-user/team với profile `local-ai`.
 
 Chạy kiểm thử tương tác trình duyệt sau khi bộ dịch vụ Compose đã sẵn sàng:
 
@@ -562,7 +569,7 @@ docker compose exec -T api python -m app.operations verify-openai
 
 Lệnh chỉ trả các trường trạng thái được phép và kết thúc khác 0 khi có lỗi nhà cung cấp có mã; nó không in thông tin xác thực, câu lệnh, nội dung phản hồi, ID yêu cầu hoặc ID phản hồi.
 
-Trợ lý có thể đọc ngữ cảnh theo phạm vi và tạo đề xuất thay đổi đồ thị, nhưng không thể xuất bản hoặc xóa dữ liệu đồ thị. Mọi nút, cạnh, tên thay thế hoặc bằng chứng đề xuất đều được ghi vào bộ thay đổi nháp và phải qua kiểm tra cùng quy trình con người duyệt/áp dụng. Điều chỉnh giới hạn bằng các biến `CHAT_MAX_*` trong `.env.example`.
+Trợ lý có thể đọc ngữ cảnh theo phạm vi và tạo đề xuất thay đổi đồ thị, nhưng không thể xuất bản hoặc xóa dữ liệu đồ thị. Mọi nút, cạnh, tên thay thế hoặc bằng chứng đề xuất đều được ghi vào bộ thay đổi nháp và phải qua kiểm tra cùng quy trình con người duyệt/áp dụng. Để điều chỉnh giới hạn, thêm biến `CHAT_MAX_*` tương ứng vào `.env`. Xem mặc định trong [docker-compose.yml](docker-compose.yml).
 
 ## Ghi chú kiến trúc
 

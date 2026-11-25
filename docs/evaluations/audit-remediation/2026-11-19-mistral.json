@@ -1,0 +1,31 @@
+{
+  "date": "2026-11-19",
+  "transport": "live API from running application container",
+  "synthetic_input_only": true,
+  "default_provider_changed": false,
+  "models": {
+    "http_status": 200,
+    "configured_model": "mistral-large-latest",
+    "configured_model_listed": false,
+    "embedding_model_listed": true
+  },
+  "structured_completion": {
+    "model": "mistral-large-latest",
+    "http_status": 403,
+    "error_type": "tier_not_allowed",
+    "error_code": "1910",
+    "schema_validated": false
+  },
+  "alternative_model_probes": [
+    {"model": "mistral-medium-latest", "http_status": 429},
+    {"model": "mistral-small-latest", "http_status": 429, "sequential_retries_also_429": true, "later_cooldown_retry_http_status": 429}
+  ],
+  "embedding": {
+    "model": "mistral-embed",
+    "status": "passed",
+    "dimensions": 1024,
+    "vector_validation": "existing application adapter validates dimension and finite values"
+  },
+  "conclusion": "Embedding works. Generation is not currently ready with this credential/tier/rate limit; do not infer credit or silently switch providers.",
+  "sensitive_output_recorded": false
+}

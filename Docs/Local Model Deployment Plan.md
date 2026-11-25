@@ -64,6 +64,47 @@ flowchart LR
 - Không tải trọng số model trên đĩa hiện tại. Chạy model thật cần model đã cài và đủ tài nguyên;
   hướng dẫn vận hành nêu riêng phần cần operator thực hiện.
 
+## Recipe model trên máy cá nhân
+
+Máy deploy cần SSH truy cập được bằng tài khoản/khóa có sẵn của operator. Chạy lệnh này **trên máy
+cá nhân đang chạy model**, thay `operator@deploy-host` bằng địa chỉ thật:
+
+```bash
+ssh -NT -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+  -R 127.0.0.1:21434:127.0.0.1:11434 \
+  -R 127.0.0.1:21234:127.0.0.1:1234 operator@deploy-host
+```
+
+Hai cổng `21434` và `21234` trên máy deploy phải còn trống. Có thể bỏ dòng `-R` của runtime không
+dùng. SSH server phải cho phép remote forwarding; giữ `GatewayPorts no` để đầu tunnel chỉ nghe
+loopback, không dùng `-R 0.0.0.0:...`. Lệnh giữ terminal mở; Ctrl+C sẽ đóng tunnel. Operator có thể
+quản lý tiến trình bằng cơ chế service sẵn có; ứng dụng không tự tạo tài khoản/khóa SSH.
+
+Trong `.env.team` trên **máy deploy**, giữ URL container tới bridge và đổi upstream:
+
+```dotenv
+COMPOSE_PROFILES=https,local-ai
+OLLAMA_BASE_URL=http://172.17.0.1:11435
+OLLAMA_BRIDGE_UPSTREAM=http://127.0.0.1:21434
+LOCAL_OPENAI_BASE_URL=http://172.17.0.1:11437/v1
+LOCAL_OPENAI_BRIDGE_UPSTREAM=http://127.0.0.1:21234
+```
+
+Giữ hồ sơ `tunnel` thay `https` nếu đó là lối vào hiện có; không thay domain/đăng nhập. Đặt tên
+model đã cài vào `OLLAMA_MODEL`/`LOCAL_OPENAI_MODEL`; key nếu runtime yêu cầu chỉ đặt trong env/secret
+trên máy deploy. Chạy `make team-config && make team-up`, rồi kiểm tra danh mục/inference theo
+[runbook mục 5a](Team%20Deployment%20Runbook.md#5a-kết-nối-model-local). Với bản cục bộ, các upstream
+tương tự đặt trong `.env`, dùng lệnh Compose local có hồ sơ `local-ai` ở README.
+
+Nếu dùng VPN thay SSH, operator có thể đặt `*_BASE_URL` tới endpoint VPN riêng mà container truy cập
+được, hoặc đặt `*_BRIDGE_UPSTREAM` tới origin riêng đó. Cho phép truy cập chỉ từ máy deploy bằng
+firewall/VPN và dùng TLS nếu đường mạng yêu cầu. Không đưa API model ra Internet. Endpoint LM Studio
+trong `LOCAL_OPENAI_BASE_URL` có hậu tố `/v1`; upstream bridge chỉ có origin, không thêm `/v1`.
+`localhost` của người đang mở trình duyệt không tham gia đường kết nối này.
+
+Recipe là hướng dẫn cấu hình, chưa phải bằng chứng SSH hoặc model thật đã được nghiệm thu. Cần ghi
+riêng: protocol, vị trí model, danh mục, probe JSON và một cuộc trò chuyện thật thành công.
+
 ## Ngoài phạm vi
 
 Không tự provision VPS/domain, đăng ký VPN, cấp SSH credential, tải model hoặc tự đổi provider mặc
@@ -75,3 +116,4 @@ Không tự provision VPS/domain, đăng ký VPN, cấp SSH credential, tải mo
 - [Ollama chat](https://docs.ollama.com/api/chat), [model inventory](https://docs.ollama.com/api/tags),
   [network FAQ](https://docs.ollama.com/faq).
 - [LM Studio OpenAI-compatible API](https://lmstudio.ai/docs/developer/openai-compat).
+- [OpenSSH remote forwarding (`ssh -R`)](https://man.openbsd.org/ssh.1#R).

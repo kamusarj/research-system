@@ -138,6 +138,54 @@ make team-up
 `COMPOSE_PROFILES`), chờ healthcheck rồi chạy `scripts/team.sh verify`: dịch vụ đang chạy, API không
 mở cổng, `auth/config` báo `enabled=true` và API dữ liệu trả `401` khi chưa đăng nhập.
 
+### 5a. Kết nối model local
+
+Mẫu `.env.team.example` đã khai báo hai URL cầu nối. Khi cần dùng, thêm `local-ai` vào hồ sơ lối vào
+đang chọn, ví dụ `COMPOSE_PROFILES=https,local-ai` hoặc `tunnel,local-ai`. Nếu có reverse proxy riêng,
+dùng `COMPOSE_PROFILES=local-ai`. Giữ nguyên các cấu hình đăng nhập/HTTPS của bản nhóm.
+
+**Model cùng máy chủ Linux:** mở Ollama trên `127.0.0.1:11434` hoặc LM Studio trên
+`127.0.0.1:1234`, dùng model đã cài. Trong `.env.team`, đặt `OLLAMA_MODEL` hoặc
+`LOCAL_OPENAI_MODEL` thành đúng định danh từ runtime model. Không cần đổi provider mặc định để
+chọn model trong Trò chuyện. AI tác vụ nền chỉ đổi khi operator chủ động đặt
+`AI_PROVIDER=ollama|local_openai`.
+
+API/worker gọi `OLLAMA_BASE_URL=http://172.17.0.1:11435` hoặc
+`LOCAL_OPENAI_BASE_URL=http://172.17.0.1:11437/v1`. Bridge chuyển tiếp tới
+`OLLAMA_BRIDGE_UPSTREAM=http://127.0.0.1:11434` hoặc
+`LOCAL_OPENAI_BRIDGE_UPSTREAM=http://127.0.0.1:1234`.
+
+`172.17.0.1` là ví dụ mặc định của Linux Docker, không phải IP máy cá nhân. Kiểm tra địa chỉ bridge
+trên máy deploy bằng `docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}'`;
+nếu khác, đổi cả `*_BRIDGE_BIND` và host trong `*_BASE_URL` tương ứng. Không bind bridge vào IP
+công khai. Các service `network_mode: host` này cần máy Linux có địa chỉ bridge truy cập được từ
+container; Docker Desktop cần cấu hình mạng tương đương hoặc endpoint VPN riêng.
+
+Sau khi đã đủ đĩa để build ảnh nhóm:
+
+```bash
+make team-config
+make team-up
+docker compose --env-file .env.team -f docker-compose.yml -f docker-compose.team.yml \
+  --profile local-ai exec -T api python - <<'PY'
+from app.services.providers.local_models import list_local_models
+for provider in ("ollama", "local_openai"):
+    try:
+        print(provider, "installed_models=", len(list_local_models(provider)))
+    except Exception as error:
+        print(provider, "error=", getattr(error, "code", type(error).__name__))
+PY
+```
+
+Không cấu hình cả hai runtime cũng được; runtime không dùng sẽ báo chưa kết nối. Trong **Trò chuyện**,
+chọn Ollama hoặc model local tương thích OpenAI, tải danh sách và kiểm tra model, rồi tạo cuộc trò
+chuyện. Phép kiểm tra này mới thực hiện inference; danh mục có model chưa chứng minh model trả lời
+được JSON. Model được giữ cố định theo phiên. Embedding vẫn dùng cấu hình riêng hiện có.
+
+**Model trên máy cá nhân, ứng dụng ở máy chủ khác:** xem recipe reverse SSH và VPN tại
+[kế hoạch local model](Local%20Model%20Deployment%20Plan.md#recipe-model-trên-máy-cá-nhân).
+Giữ máy cá nhân và tunnel hoạt động; mất kết nối sẽ báo lỗi, không tự chuyển cloud.
+
 ### Tự khởi động sau khi máy khởi động lại
 
 Container dùng `restart: unless-stopped`. Nếu đã cài dịch vụ người dùng `business-ai-agents.service`,
@@ -210,9 +258,13 @@ make team-backup
 ```
 
 Tạo `~/business-ai-agents-backups/<thời-điểm>/` (quyền 700) gồm `postgres.dump` (định dạng custom,
-đã kiểm tra bằng `pg_restore --list`) và `document-objects.tar.gz`; giữ 14 bản gần nhất. Tùy chọn:
-`BACKUP_DIR=/đường/dẫn`, `BACKUP_KEEP=30`, `BACKUP_QUIESCE=1` (dừng API/worker trong lúc sao lưu để
-có ảnh chụp nhất quán). Cài timer người dùng cho cả local hoặc team:
+đã kiểm tra bằng `pg_restore --list`), `document-objects.tar.gz` và manifest SHA-256. Backup thủ công
+và timer dùng chung engine: luôn dừng API/worker đang chạy trong cả hai bước dump/tar, rồi khởi động
+lại đúng các dịch vụ đó kể cả khi gặp lỗi. Trong lúc backup, thao tác ghi và ứng dụng có thể tạm
+gián đoạn; không có tùy chọn bỏ quiesce. Giữ 14 bản hoàn tất gần nhất có manifest của engine;
+không xóa thư mục rollback/thủ công không được engine nhận dạng. Có thể đặt
+`BACKUP_DIR=/đường/dẫn`, `BACKUP_KEEP=30`; `TEAM_ENV_FILE` chọn file env nhóm khác.
+Cài timer người dùng cho cả local hoặc team:
 
 ```bash
 scripts/install_backup_timer.sh
@@ -229,19 +281,53 @@ Nếu đổi mã script, chạy lại installer. Không cài thêm cron trùng l
 
 Sao chép thư mục sao lưu ra ổ/dịch vụ khác. Khóa API nằm trong `.env.team`/secret, cần sao lưu riêng.
 
-Khôi phục (ghi đè dữ liệu hiện tại — chỉ làm khi đã có quyết định bảo trì):
+Khôi phục dùng helper có kiểm tra lỗi, chỉ hỗ trợ bản backup local có manifest của engine. Trước
+khi bảo trì, giữ một bản backup hiện trạng đã xác minh ở vị trí riêng để có đường quay lại. Kiểm
+tra bản định khôi phục trước (không dừng dịch vụ hoặc ghi đè dữ liệu):
 
 ```bash
-C="docker compose --env-file .env.team -f docker-compose.yml -f docker-compose.team.yml"
-B=~/business-ai-agents-backups/<thời-điểm>
-$C stop api worker frontend
-$C exec -T database sh -c 'pg_restore --clean --if-exists --no-owner -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < $B/postgres.dump
-$C run --rm --no-deps -T --entrypoint tar worker --no-same-owner --no-same-permissions -C /var/lib/research-system/objects -xzf - < $B/document-objects.tar.gz
-$C up -d --wait
-make team-verify
+RESTORE_FROM=/đường/dẫn/backup make team-restore
 ```
 
-Diễn tập khôi phục vào cơ sở dữ liệu tạm theo `Docs/Graph Intelligence v2 Operations Runbook.md`.
+Helper kiểm hash/kích thước của cả dump và tar, từ chối đường dẫn thoát thư mục, link và entry đặc
+biệt/trùng lặp; kiểm catalogue PostgreSQL và dung lượng đủ để giải nén vào staging. Database phải
+đang chạy; ảnh worker phải có sẵn. Phép kiểm tra tạo container tạm không có dependency để đọc dung
+lượng volume, không khởi động ứng dụng. MinIO cần quy trình khôi phục và kiểm chứng riêng.
+
+Chỉ khi đã quyết định bảo trì và chấp nhận thay thế dữ liệu hiện tại:
+
+```bash
+RESTORE_FROM=/đường/dẫn/backup RESTORE_APPLY=1 make team-restore
+```
+
+Khôi phục dùng lock chung với backup, dừng API/worker/frontend, giải nén vào thư mục staging riêng
+trước khi thay database. PostgreSQL dùng `--single-transaction` (bao gồm dừng khi SQL lỗi). Sau đó
+helper đổi tệp từ staging, chạy migration/parity và kiểm tham chiếu/hash tệp cùng invariant đồ thị
+khi ứng dụng còn dừng; chỉ khởi động lại các dịch vụ vốn đang chạy sau khi mọi kiểm tra đạt. Nếu
+frontend được khởi động lại, còn kiểm health/xác thực và dữ liệu ẩn danh phải trả401.
+Tệp trước khôi phục được giữ đến khi cả kiểm tra chạy thật đạt; helper chỉ dọn chúng cuối cùng.
+
+**Bất kỳ lỗi nào sau khi bắt đầu bảo trì đều không tự resume**; helper cố dừng cả ba dịch vụ,
+trả exit1 và tên bước lỗi. Transaction chỉ bảo vệ PostgreSQL, không tạo transaction chung với tệp.
+Nếu lỗi ở bước đổi tệp/migration/smoke, database có thể đã khôi phục và volume có thể chứa staging
+hoặc `.restore-previous-*`; giữ ứng dụng dừng, không chạy autostart/team-up/timer backup cho đến khi
+operator kiểm tra. Tắt lịch backup/autostart trong cửa sổ khôi phục và bật lại sau nghiệm thu.
+Không tự xóa các thư mục `.restore-*`: bảo toàn chúng để phục hồi hoặc kiểm tra rồi xử lý thủ công;
+helper từ chối một lần khôi phục mới khi còn thư mục này. Nếu cần quay lại, dùng bản backup trước
+bảo trì đã xác minh sau khi làm rõ trạng thái database/tệp. Chỉ lần thành công mới dọn bản tệp cũ.
+
+`TEAM_ENV_FILE` chọn env nhóm khác. Nếu dùng overlay secret, cấp cùng file cho helper:
+`RESTORE_COMPOSE_FILE=docker-compose.secrets.example.yml` (kèm các biến đường dẫn secret như lúc
+triển khai). Hoặc gọi `python3 scripts/restore_local.py --repo "$PWD" --env-file .env.team
+--backup /đường/dẫn/backup --compose-file /đường/dẫn/overlay.yml`; thêm `--apply` chỉ trong bảo trì.
+Không có flag apply thì chỉ kiểm tra. Không dùng lại chuỗi lệnh restore rời rạc bỏ qua exit code.
+Với stack cục bộ, có thể bỏ `--env-file`: helper tự chọn `.env.team` nếu có, nếu không dùng cùng
+base/multi-user và project local với backup timer. Không đổi chế độ xác thực khi kiểm/khôi phục;
+smoke local đối chiếu cấu hình xác thực hiện có. Timer từ chối xuất bản một backup mới nếu volume
+còn `.restore-*`, tránh nhận nhầm staging chưa hoàn tất thành một bản sao lưu dùng được.
+
+Diễn tập vào môi trường tách biệt theo `Docs/Graph Intelligence v2 Operations Runbook.md`; bản vá
+này được kiểm bằng fixture, không có quyền tự restore ghi đè database thật của người dùng.
 
 ## 9. Xử lý sự cố
 
