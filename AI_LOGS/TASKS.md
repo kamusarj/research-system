@@ -70,9 +70,10 @@ giữ tại [archive](ARCHIVE/2026-11-18-before-deployed-local-models-TASKS.md).
   Cần hạn mức/tier phù hợp trước khi chọn Mistral sinh nội dung; không đổi mặc định để né lỗi.
 - [ ] Operator cài model thật (Ollama hoặc LM Studio) trên máy chủ/tunnel, đặt env và xác nhận chat/JSON
   end-to-end; ghi evidence riêng, không dùng fixture. Sau đó Linh nghiệm thu UI local models.
-- [x] CI `.github/workflows/ci.yml` đã kiểm local (API 939, bot 56, web 236 + lint/tsc/build, 3 Compose
-  config, gitleaks 0) và đóng gói đẩy lên `origin/feature/research-system-mvp` (2026-11-25). Theo dõi
-  run GitHub Actions.
+- [x] CI `.github/workflows/ci.yml` đã đẩy lên `origin/feature/research-system-mvp` (`bf5c69d`,
+  intake #40 sửa `python -m pytest`): GitHub Actions **`ci` run `45581065933` SUCCESS** (5/5 job:
+  API, Discord bot, Web, PostgreSQL migrations/parity, Compose) và **`security` run `45581066073`
+  SUCCESS** (2026-11-25).
 
 ## Blocked / Needs Owner Inputs
 

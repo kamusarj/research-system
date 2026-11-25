@@ -63,3 +63,11 @@ Linh chọn thực hiện cả 2 hướng (2026-11-25, Asia/Bangkok, Antigravity
 - Còn mở:
   - `US-OPTIMIZATION-PROGRAM`: giữ `in_progress` do 2 điểm dao động 1 thực thể từng câu (`q6-roi`, `q8-sme-vietnam`) trong khi 16/16 lượt đạt 5/5 góc nhìn, 100% trích dẫn, −46,3% token và `entity_recall` TB tăng `0,400 → 0,450`.
   - Theo dõi kết quả GitHub Actions run trên `origin/feature/research-system-mvp` sau khi push; Linh nghiệm thu UI Weave/Graph v2 trên `:13000`.
+
+## Checkpoint 5 — Xác minh GitHub Actions CI & Security xanh toàn bộ (16:00)
+
+- Lượt đẩy đầu tiên (`175890f`, run `45580700185`) đạt 4/5 job `ci` + `security` (`45580700169`), riêng job `API (ruff, pytest)` báo `ModuleNotFoundError: No module named 'tests'` vì `.github/workflows/ci.yml` gọi `uv run pytest` thay vì `uv run --frozen python -m pytest`.
+- Intake #40 (tiny): sửa `.github/workflows/ci.yml` sang `uv run --frozen ruff check .` và `uv run --frozen python -m pytest`, commit `bf5c69d` và push.
+- Kết quả GitHub Actions thực tế trên `bf5c69d`:
+  - **`ci` run `45581065933`: SUCCESS** — đạt cả 5/5 job (`API`, `Discord bot`, `Web`, `PostgreSQL migration and model parity`, `Compose config`).
+  - **`security` run `45581066073`: SUCCESS**.

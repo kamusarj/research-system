@@ -13,9 +13,12 @@ Intake 39 (`US-OPTIMIZATION-PROGRAM`, Antigravity). Lượt đo đối chứng l
   giảm 1 thực thể dù trung bình cao hơn). Giữ nguyên chuẩn không hạ cổng (`US-OPTIMIZATION-PROGRAM`
   giữ `in_progress`). Artifacts: `docs/evaluations/research-agent/2026-11-25-r2-*`.
 - Đã kiểm tra đầy đủ CI cục bộ (API 939, bot 56, web 236 + eslint/tsc/`npm run build`, 3 Compose
-  config, `gitleaks` 0 leak), restart `worker`/`api` (health 200, anon 401, `/graph` 200) và đóng
-  gói commit theo từng lớp (`14ed9fa`, `d4566f6`, `7e24ba7` + commit docs/AI_LOGS) để đẩy lên
-  `origin/feature/research-system-mvp`. Chi tiết: [phiên 1515](SESSIONS/2026-11-25-1515-rank-first-eval-and-release.md).
+  config, `gitleaks` 0 leak), restart `worker`/`api` (health 200, anon 401, `/graph` 200), đóng gói
+  và đẩy lên `origin/feature/research-system-mvp` (`14ed9fa`, `d4566f6`, `7e24ba7`, `175890f`, và
+  intake #40 sửa `python -m pytest` trong CI `bf5c69d`).
+- **GitHub Actions thực tế trên `bf5c69d`**: **`ci` run `45581065933` SUCCESS** (đạt cả 5/5 job:
+  API, Discord bot, Web, PostgreSQL migration/parity, Compose) và **`security` run `45581066073`
+  SUCCESS**. Chi tiết: [phiên 1515](SESSIONS/2026-11-25-1515-rank-first-eval-and-release.md).
 
 ## Tối ưu lọc đoạn nguyên văn & đo đối chứng đủ 8 câu Research Agent (2026-11-25 14:28)
 
